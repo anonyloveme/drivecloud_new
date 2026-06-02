@@ -145,6 +145,8 @@ Thanks to all development teams and **contributors** for providing great tools a
 
 ---
 
-## 📜 License
+## 📜 License & Credits
 
 This project is licensed under the [GNU Affero General Public License v3.0 (AGPL-3.0)](https://www.gnu.org/licenses/agpl-3.0.html).
+
+Based on [TeleCloud](https://github.com/dabeecao/telecloud-go) by [@dabeecao](https://github.com/dabeecao).

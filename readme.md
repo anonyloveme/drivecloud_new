@@ -145,6 +145,8 @@ Xin cảm ơn các đội ngũ phát triển và các **nhà đóng góp (contri
 
 ---
 
-## 📜 Giấy phép
+## 📜 Giấy phép & Credits
 
 Dự án này được phát hành dưới giấy phép [GNU Affero General Public License v3.0 (AGPL-3.0)](https://www.gnu.org/licenses/agpl-3.0.html).
+
+Dựa trên [TeleCloud](https://github.com/dabeecao/telecloud-go) của [@dabeecao](https://github.com/dabeecao).
