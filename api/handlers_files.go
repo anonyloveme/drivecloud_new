@@ -1224,7 +1224,7 @@ func (h *Handler) handlePostCheckExists(c *gin.Context) {
 	existing := make([]string, 0)
 	for _, fn := range filenames {
 		var count int
-		err := database.RODB.Get(&count, "SELECT COUNT(*) FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", dbPath, fn, username)
+		err := database.RODB.Get(&count, "SELECT COUNT(*) FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ? AND deleted_at IS NULL", dbPath, fn, username)
 		if err == nil && count > 0 {
 			existing = append(existing, fn)
 		}
@@ -1712,6 +1712,122 @@ func (h *Handler) handleDownloadFolder(c *gin.Context) {
 			}
 
 			reader, err := tgclient.GetTelegramFileReader(c.Request.Context(), item, h.cfg)
+			if err != nil {
+				continue
+			}
+
+			_, _ = io.Copy(writer, reader)
+			reader.Close()
+
+			if flusher, ok := c.Writer.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}
+	}
+}
+
+func (h *Handler) handleDownloadBulk(c *gin.Context) {
+	var req struct {
+		IDs []int `json:"ids"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.IDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing or invalid ids"})
+		return
+	}
+	if len(req.IDs) > 500 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "too many items"})
+		return
+	}
+
+	username := c.GetString("username")
+
+	type zipEntry struct {
+		zipPath string
+		file    database.File
+	}
+	var entries []zipEntry
+	seenPaths := make(map[string]bool)
+
+	for _, id := range req.IDs {
+		var item database.File
+		if err := database.RODB.Get(&item, "SELECT * FROM files WHERE id = ? AND owner = ? AND deleted_at IS NULL", id, username); err != nil {
+			continue
+		}
+
+		if item.IsFolder {
+			folderPrefix := item.Path + "/" + item.Filename
+			if item.Path == "/" {
+				folderPrefix = "/" + item.Filename
+			}
+
+			var allItems []database.File
+			if err := database.RODB.Select(&allItems,
+				"SELECT * FROM files WHERE (path = ? OR path LIKE ?) AND owner = ? AND deleted_at IS NULL AND (is_folder = 1 OR message_id IS NOT NULL)",
+				folderPrefix, folderPrefix+"/%", username); err != nil {
+				continue
+			}
+
+			for _, child := range allItems {
+				childFullPath := child.Path + "/" + child.Filename
+				if child.Path == "/" {
+					childFullPath = "/" + child.Filename
+				}
+				parentPrefix := item.Path
+				var zipPath string
+				if parentPrefix == "/" {
+					zipPath = strings.TrimPrefix(childFullPath, "/")
+				} else {
+					zipPath = strings.TrimPrefix(strings.TrimPrefix(childFullPath, parentPrefix), "/")
+				}
+				if seenPaths[zipPath] {
+					continue
+				}
+				seenPaths[zipPath] = true
+				entries = append(entries, zipEntry{zipPath: zipPath, file: child})
+			}
+		} else {
+			zipPath := item.Filename
+			if seenPaths[zipPath] {
+				continue
+			}
+			seenPaths[zipPath] = true
+			entries = append(entries, zipEntry{zipPath: zipPath, file: item})
+		}
+	}
+
+	if len(entries) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no files found"})
+		return
+	}
+
+	c.Header("Content-Disposition", `attachment; filename="download.zip"`)
+	c.Header("Content-Type", "application/zip")
+	c.Header("X-Accel-Buffering", "no")
+	c.SetCookie("dl_started", "1", 15, "/", "", false, false)
+
+	zw := zip.NewWriter(c.Writer)
+	defer zw.Close()
+
+	for _, entry := range entries {
+		if entry.file.IsFolder {
+			zipDir := entry.zipPath
+			if !strings.HasSuffix(zipDir, "/") {
+				zipDir += "/"
+			}
+			_, _ = zw.Create(zipDir)
+		} else {
+			header := &zip.FileHeader{
+				Name:   entry.zipPath,
+				Method: zip.Deflate,
+			}
+			header.Modified = entry.file.CreatedAt
+
+			writer, err := zw.CreateHeader(header)
+			if err != nil {
+				continue
+			}
+
+			reader, err := tgclient.GetTelegramFileReader(c.Request.Context(), entry.file, h.cfg)
 			if err != nil {
 				continue
 			}

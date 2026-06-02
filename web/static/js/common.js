@@ -334,7 +334,7 @@ TeleCloud.loadTranslations(TeleCloud.lang);
    ║ ├┤ │  ├┤ ║  │  │ ││ │ ││
    ╩ └─┘┴─┘└─┘╚═╝┴─┘└─┘└─┘─┴┘
 `;
-    console.log(`%c${ascii}%cDrive %c${TeleCloud.version} %c- Powered by %c@dabeecao`, 
+    console.log(`%c${ascii}%cDrive %c${TeleCloud.version} %c- Powered by %c@hoanganhblog`, 
         "color: #3b82f6; font-weight: bold; font-family: monospace;",
         "color: #64748b; font-weight: bold;",
         "color: #3b82f6; font-weight: bold;",

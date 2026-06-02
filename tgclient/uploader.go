@@ -692,7 +692,7 @@ func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeTy
 	var existingID int
 	var existingThumb *string
 	if overwrite {
-		database.RODB.QueryRow("SELECT id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", path, filename, owner).Scan(&existingID, &existingThumb)
+		database.RODB.QueryRow("SELECT id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ? AND deleted_at IS NULL", path, filename, owner).Scan(&existingID, &existingThumb)
 	}
 
 	// Serialize filename uniqueness check + DB insert to prevent TOCTOU
@@ -1016,7 +1016,7 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	var existingID int
 	var existingThumb *string
 	if overwrite {
-		database.RODB.QueryRow("SELECT id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", path, filename, owner).Scan(&existingID, &existingThumb)
+		database.RODB.QueryRow("SELECT id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ? AND deleted_at IS NULL", path, filename, owner).Scan(&existingID, &existingThumb)
 	}
 
 	// Serialize filename uniqueness check + DB insert to prevent TOCTOU races.
@@ -1282,7 +1282,7 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 	var existingID int
 	var existingThumb *string
 	if overwrite {
-		database.RODB.QueryRow("SELECT id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", path, filename, owner).Scan(&existingID, &existingThumb)
+		database.RODB.QueryRow("SELECT id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ? AND deleted_at IS NULL", path, filename, owner).Scan(&existingID, &existingThumb)
 	}
 
 	// Serialize filename uniqueness check + DB insert to prevent TOCTOU races.
@@ -1529,7 +1529,7 @@ func uploadFilePart(ctx context.Context, api *tg.Client, up *uploader.Uploader, 
 		displayInfo = filename
 	}
 
-	finalCaption := "<b>📄 File:</b> " + displayInfo + "\n\n<b>🚀 Powered by Drive</b>\n<i>Unlimited Cloud Storage via Telegram</i>\n\n🔗 <a href=\"https://github.com/dabeecao/telecloud-go\">GitHub Repository</a>"
+	finalCaption := "<b>📄 File:</b> " + displayInfo + "\n\n<b>🚀 Powered by Drive</b>\n<i>Unlimited Cloud Storage via Telegram</i>\n\n🔗 <a href=\"https://github.com/hoanganhblog/drivecloud1\">GitHub Repository</a>"
 
 	docBuilder := message.UploadedDocument(file, html.String(nil, finalCaption)).
 		Filename(filename).
@@ -1662,7 +1662,7 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 	var existingID int
 	var existingThumb *string
 	if overwrite {
-		database.RODB.QueryRow("SELECT id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ?", path, filename, owner).Scan(&existingID, &existingThumb)
+		database.RODB.QueryRow("SELECT id, thumb_path FROM files WHERE path = ? AND filename = ? AND is_folder = 0 AND owner = ? AND deleted_at IS NULL", path, filename, owner).Scan(&existingID, &existingThumb)
 	}
 
 	// Serialize filename uniqueness check + DB insert to prevent TOCTOU races.

@@ -1,6 +1,6 @@
-// Copyright (C) 2026 @dabeecao
+// Copyright (C) 2026 @hoanganhblog
 //
-// This file is part of Drive, based on TeleCloud by @dabeecao.
+// This file is part of Drive, based on TeleCloud by @hoanganhblog.
 // Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
 
 package main
@@ -98,7 +98,7 @@ func main() {
 	fmt.Printf("  ╔╦╗┬─┐┌─┐┌─┐\n")
 	fmt.Printf("   ║ ├┬┘├┤ └─┐\n")
 	fmt.Printf("   ╩ ┴└─└─┘└─┘\n")
-	fmt.Printf("  Drive %s - Powered by @dabeecao\n\n", version)
+	fmt.Printf("  Drive %s - Powered by @hoanganhblog\n\n", version)
 	log.Println("Drive is starting, please wait...")
 
 	cfg, err := config.Load()
@@ -236,8 +236,9 @@ func main() {
 		setupURL := fmt.Sprintf("http://%s:%s/setup", setupHost, cfg.Port)
 		log.Printf("Setup is incomplete. Starting in Setup Mode. Please visit: %s", setupURL)
 		log.Println("Starting Drive on port " + cfg.Port + "...")
+	} else {
+		startTG(cfg)
 	}
-
 
 	go func() {
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {

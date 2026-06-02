@@ -1170,47 +1170,93 @@ function cloudApp(initialIsLoggedIn, isAdmin = true, storageUsed = 0, webdavEnab
             }, 30000);
         },
         async downloadSelectedBatch() {
-            const fileIdsToDownload = this.selectedIds.map(Number).filter(id => {
-                const f = this.files.find(file => file.id === id);
-                return f && !f.is_folder;
-            });
-            if (fileIdsToDownload.length === 0) {
+            const allIds = this.selectedIds.map(Number);
+            if (allIds.length === 0) {
                 this.showToast(this.t('toast_only_files'), 'error');
                 return;
             }
-            if (this.selectedIds.length !== fileIdsToDownload.length) {
-                this.showToast(this.t('toast_skipped_folders'));
-            }
 
-            // Start Batch Download UX
-            this.batchDownload.active = true;
-            this.batchDownload.total = fileIdsToDownload.length;
-            this.batchDownload.current = 0;
+            const fileMap = new Map(this.files.map(f => [f.id, f]));
+            const selectedFiles = [];
+            const selectedFolders = [];
 
-            for (let i = 0; i < fileIdsToDownload.length; i++) {
-                this.batchDownload.current = i + 1;
-                const fileId = fileIdsToDownload[i];
-                
-                const iframe = document.createElement('iframe');
-                iframe.style.display = 'none';
-                iframe.src = `/download/${fileId}`;
-                document.body.appendChild(iframe);
-                
-                // Cleanup iframe after some time
-                setTimeout(() => iframe.remove(), 30000);
-
-                if (i < fileIdsToDownload.length - 1) {
-                    // Small delay to allow browser to handle multiple downloads
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+            for (const id of allIds) {
+                const f = fileMap.get(id);
+                if (f && f.is_folder) {
+                    selectedFolders.push(f);
+                } else {
+                    selectedFiles.push(id);
                 }
             }
 
-            // End Batch Download UX
+            // Single folder only → use existing folder-zip endpoint
+            if (selectedFolders.length === 1 && selectedFiles.length === 0) {
+                const iframe = document.createElement('iframe');
+                iframe.style.display = 'none';
+                iframe.src = `/download/folder/${selectedFolders[0].id}`;
+                document.body.appendChild(iframe);
+                setTimeout(() => iframe.remove(), 30000);
+                this.selectedIds = [];
+                return;
+            }
+
+            // Files only (including unknown IDs treated as files) → batch download
+            if (selectedFolders.length === 0) {
+                this.batchDownload.active = true;
+                this.batchDownload.total = selectedFiles.length;
+                this.batchDownload.current = 0;
+
+                for (let i = 0; i < selectedFiles.length; i++) {
+                    this.batchDownload.current = i + 1;
+                    const iframe = document.createElement('iframe');
+                    iframe.style.display = 'none';
+                    iframe.src = `/download/${selectedFiles[i]}`;
+                    document.body.appendChild(iframe);
+                    setTimeout(() => iframe.remove(), 30000);
+                    if (i < selectedFiles.length - 1) {
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                    }
+                }
+
+                setTimeout(() => {
+                    this.batchDownload.active = false;
+                    this.showToast(this.t('toast_dl_started'), 'success');
+                }, 2000);
+                this.selectedIds = [];
+                return;
+            }
+
+            // Mixed (files + folders) or multiple folders → bulk zip endpoint
+            const bulkIds = [...selectedFiles, ...selectedFolders.map(f => f.id)];
+            this.batchDownload.active = true;
+            this.batchDownload.total = 1;
+            this.batchDownload.current = 0;
+
+            try {
+                const resp = await fetch('/download/bulk', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: bulkIds })
+                });
+                if (!resp.ok) throw new Error('Download failed');
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'download.zip';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                this.batchDownload.current = 1;
+            } catch (e) {
+                console.error('Bulk download failed:', e);
+            }
+
             setTimeout(() => {
                 this.batchDownload.active = false;
                 this.showToast(this.t('toast_dl_started'), 'success');
-            }, 2000);
-
+            }, 1000);
             this.selectedIds = [];
         },
         files: [], 
@@ -1308,8 +1354,9 @@ function cloudApp(initialIsLoggedIn, isAdmin = true, storageUsed = 0, webdavEnab
         },
         get isOnlyFoldersSelected() {
             if (this.selectedIds.length === 0) return false;
+            const fileMap = new Map(this.files.map(f => [f.id, f]));
             return this.selectedIds.every(id => {
-                const f = this.files.find(file => file.id === Number(id));
+                const f = fileMap.get(Number(id));
                 return f && f.is_folder;
             });
         },
@@ -1500,7 +1547,6 @@ function cloudApp(initialIsLoggedIn, isAdmin = true, storageUsed = 0, webdavEnab
 
             if (this.isLoggedIn) {
                 this.fetchFiles(false);
-                this.checkUpdate();
                 this.initWebSocket();
                 this.fetchPasskeys();
                 this.fetchActiveTasks();
@@ -1574,55 +1620,6 @@ function cloudApp(initialIsLoggedIn, isAdmin = true, storageUsed = 0, webdavEnab
                     document.body.classList.remove('preloader-active');
                 }, 150);
             });
-        },
-        async checkUpdate() {
-            const compareVersions = (v1, v2) => {
-                const p1 = (v1 || 'v0.0.0').replace(/^v/, '').split('.').map(Number);
-                const p2 = (v2 || 'v0.0.0').replace(/^v/, '').split('.').map(Number);
-                for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
-                    const n1 = p1[i] || 0;
-                    const n2 = p2[i] || 0;
-                    if (n1 > n2) return 1;
-                    if (n1 < n2) return -1;
-                }
-                return 0;
-            };
-
-            try {
-                const res = await fetch('https://api.github.com/repos/dabeecao/telecloud-go/releases');
-                if (res.ok) {
-                    const releases = await res.json();
-                    if (releases && releases.length > 0) {
-                        const latest = releases[0];
-                        const latestVersion = latest.tag_name;
-                        const currentVersion = TeleCloud.version || 'v1.0.0';
-                        
-                        if (latestVersion && compareVersions(latestVersion, currentVersion) === 1) {
-                            this.updateAvailable = true;
-                            this.latestReleaseUrl = latest.html_url;
-                            this.changelog = releases.slice(0, 5).map(r => ({
-                                tag: r.tag_name,
-                                name: r.name,
-                                body: r.body,
-                                url: r.html_url,
-                                date: r.published_at
-                            }));
-
-                            const dismissedDate = localStorage.getItem('tc_update_dismissed');
-                            const today = new Date().toDateString();
-                            
-                            if (dismissedDate !== today) {
-                                const choice = await this.showUIModal('update', this.t('update_title'), this.t('update_msg') + ` (${latestVersion})`);
-                                if (choice === 'confirm') {
-                                    this.currentTab = 'changelog';
-                                } else if (choice === 'dismiss_today') {
-                                    localStorage.setItem('tc_update_dismissed', today);
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (e) { console.error('Failed to check for updates', e); }
         },
         initWebSocket() {
             if (this.ws) return;
@@ -5834,47 +5831,94 @@ function shareApp() {
 
 
         async downloadSelectedBatch() {
-            const fileIdsToDownload = this.selectedIds.map(Number).filter(id => {
-                const f = this.files.find(file => file.id === id);
-                return f && !f.is_folder;
-            });
-            if (fileIdsToDownload.length === 0) {
+            const allIds = this.selectedIds.map(Number);
+            if (allIds.length === 0) {
                 this.showToast(this.t('toast_only_files'), 'error');
                 return;
             }
-            if (this.selectedIds.length !== fileIdsToDownload.length) {
-                this.showToast(this.t('toast_skipped_folders'));
-            }
 
-            // Start Batch Download UX
-            this.batchDownload.active = true;
-            this.batchDownload.total = fileIdsToDownload.length;
-            this.batchDownload.current = 0;
+            const fileMap = new Map(this.files.map(f => [f.id, f]));
+            const selectedFiles = [];
+            const selectedFolders = [];
 
-            for (let i = 0; i < fileIdsToDownload.length; i++) {
-                this.batchDownload.current = i + 1;
-                const fileId = fileIdsToDownload[i];
-                
-                const iframe = document.createElement('iframe');
-                iframe.style.display = 'none';
-                iframe.src = `/s/${this.shareToken}/file/${fileId}/dl`;
-                document.body.appendChild(iframe);
-                
-                // Cleanup iframe after some time
-                setTimeout(() => iframe.remove(), 30000);
-
-                if (i < fileIdsToDownload.length - 1) {
-                    // Small delay to allow browser to handle multiple downloads
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+            for (const id of allIds) {
+                const f = fileMap.get(id);
+                if (f && f.is_folder) {
+                    selectedFolders.push(f);
+                } else {
+                    selectedFiles.push(id);
                 }
             }
 
-            // End Batch Download UX
+            // Files only → batch download via individual iframes
+            if (selectedFolders.length === 0) {
+                this.batchDownload.active = true;
+                this.batchDownload.total = selectedFiles.length;
+                this.batchDownload.current = 0;
+
+                for (let i = 0; i < selectedFiles.length; i++) {
+                    this.batchDownload.current = i + 1;
+                    const fileId = selectedFiles[i];
+                    const iframe = document.createElement('iframe');
+                    iframe.style.display = 'none';
+                    iframe.src = `/s/${this.shareToken}/file/${fileId}/dl`;
+                    document.body.appendChild(iframe);
+                    setTimeout(() => iframe.remove(), 30000);
+                    if (i < selectedFiles.length - 1) {
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                    }
+                }
+
+                setTimeout(() => {
+                    this.batchDownload.active = false;
+                    this.showToast(this.t('toast_dl_started'), 'success');
+                }, 2000);
+                this.selectedIds = [];
+                return;
+            }
+
+            // Single folder → use existing folder-zip endpoint
+            if (selectedFolders.length === 1 && selectedFiles.length === 0) {
+                const iframe = document.createElement('iframe');
+                iframe.style.display = 'none';
+                iframe.src = `/download/folder/${selectedFolders[0].id}`;
+                document.body.appendChild(iframe);
+                setTimeout(() => iframe.remove(), 30000);
+                this.selectedIds = [];
+                return;
+            }
+
+            // Mixed or multiple folders → bulk zip endpoint
+            const bulkIds = [...selectedFiles, ...selectedFolders.map(f => f.id)];
+            this.batchDownload.active = true;
+            this.batchDownload.total = 1;
+            this.batchDownload.current = 0;
+
+            try {
+                const resp = await fetch('/download/bulk', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: bulkIds })
+                });
+                if (!resp.ok) throw new Error('Download failed');
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'download.zip';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                this.batchDownload.current = 1;
+            } catch (e) {
+                console.error('Bulk download failed:', e);
+            }
+
             setTimeout(() => {
                 this.batchDownload.active = false;
                 this.showToast(this.t('toast_dl_started'), 'success');
-            }, 2000);
-
+            }, 1000);
             this.selectedIds = [];
         },
 
@@ -5935,8 +5979,9 @@ function shareApp() {
         },
         get isOnlyFoldersSelected() {
             if (this.selectedIds.length === 0) return false;
+            const fileMap = new Map(this.files.map(f => [f.id, f]));
             return this.selectedIds.every(id => {
-                const f = this.files.find(file => file.id === Number(id));
+                const f = fileMap.get(Number(id));
                 return f && f.is_folder;
             });
         },

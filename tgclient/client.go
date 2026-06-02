@@ -1069,7 +1069,7 @@ func handleBotNewMessage(ctx context.Context, e tg.Entities, msgClass tg.Message
 	}
 
 	// Standardized consistent HTML caption for forwarded files, stripping user's original caption
-	finalCaption := "<b>📄 File:</b> " + docFilename + "\n\n<b>🚀 Powered by Drive</b>\n<i>Unlimited Cloud Storage via Telegram</i>\n\n🔗 <a href=\"https://github.com/dabeecao/telecloud-go\">GitHub Repository</a>"
+	finalCaption := "<b>📄 File:</b> " + docFilename + "\n\n<b>🚀 Powered by Drive</b>\n<i>Unlimited Cloud Storage via Telegram</i>\n\n🔗 <a href=\"https://github.com/hoanganhblog/drivecloud1\">GitHub Repository</a>"
 
 	sender := message.NewSender(botClient)
 	var updates tg.UpdatesClass

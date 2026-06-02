@@ -37,6 +37,7 @@ type File struct {
 	SharePassword  *string    `db:"share_password" json:"-"`
 	ShareViews     int        `db:"share_views" json:"share_views"`
 	ShareDownloads int        `db:"share_downloads" json:"share_downloads"`
+	Status         *string    `db:"status" json:"status,omitempty"`
 
 	// Virtual fields
 	DirectToken      string `db:"-" json:"direct_token,omitempty"`

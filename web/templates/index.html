@@ -459,22 +459,7 @@
                 </label>
             </div>
 
-            <div class="flex flex-col gap-2 mt-2" x-show="modal.type === 'update'">
-                <button @click="closeUIModal('confirm')"
-                    class="w-full px-5 py-4 rounded-2xl text-white font-bold bg-blue-600 hover:bg-blue-500 shadow-xl shadow-blue-500/25 transition-all active:scale-95 flex items-center justify-center gap-2">
-                    <i class="fa-solid fa-clock-rotate-left"></i>
-                    <span x-text="t('update_now')"></span>
-                </button>
-                <div class="grid grid-cols-2 gap-2">
-                    <button @click="closeUIModal('dismiss_today')"
-                        class="px-3 py-3 rounded-2xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 text-[10px] font-bold transition-colors uppercase tracking-wider border border-transparent hover:border-slate-200 dark:hover:border-slate-700"
-                        x-text="t('dont_remind_today')"></button>
-                    <button @click="closeUIModal(null)"
-                        class="px-3 py-3 rounded-2xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 text-[10px] font-bold transition-colors uppercase tracking-wider border border-transparent hover:border-slate-200 dark:hover:border-slate-700"
-                        x-text="t('close')"></button>
-                </div>
-            </div>
-            <div class="flex justify-end gap-3 mt-2" x-show="modal.type !== 'alert' && modal.type !== 'update'">
+            <div class="flex justify-end gap-3 mt-2" x-show="modal.type !== 'alert'">
                 <button @click="closeUIModal(null)"
                     class="px-4 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-medium transition-colors"
                     x-text="t('cancel')"></button>
@@ -1045,13 +1030,6 @@
                             class="px-4 py-1.5 rounded-lg text-sm font-semibold transition-all"
                             :class="currentTab === 'settings' ? 'bg-white dark:bg-slate-700 text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'">
                             <i class="fa-solid fa-gear mr-1.5"></i><span x-text="t('settings')"></span>
-                        </button>
-                        <button @click="currentTab = 'changelog'" x-show="updateAvailable" x-cloak
-                            class="px-4 py-1.5 rounded-lg text-sm font-semibold transition-all relative"
-                            :class="currentTab === 'changelog' ? 'bg-white dark:bg-slate-700 text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'">
-                            <i class="fa-solid fa-clock-rotate-left mr-1.5"></i><span x-text="t('changelog')"></span>
-                            <span
-                                class="absolute top-1 -right-0.5 w-2 h-2 bg-red-500 border-2 border-white dark:border-slate-700 rounded-full animate-pulse"></span>
                         </button>
                     </div>
                 </div>
@@ -2332,7 +2310,7 @@
 
                             <div
                                 class="mt-2 pt-6 border-t border-slate-200 dark:border-slate-800 flex flex-col items-center gap-3 text-[11px] text-slate-500 dark:text-slate-400 sm:hidden">
-                                <a href="https://github.com/dabeecao/telecloud-go" target="_blank"
+                                <a href="https://github.com/hoanganhblog/drivecloud1" target="_blank"
                                     class="flex items-center gap-1.5 hover:text-slate-900 dark:hover:text-white transition-colors">
                                     <i class="fa-brands fa-github text-sm"></i>
                                     <span class="font-bold">GitHub</span>
@@ -2349,7 +2327,7 @@
                                 <p class="font-medium text-center">Drive <span
                                         class="font-bold text-slate-700 dark:text-slate-300"
                                         x-text="TeleCloud.version"></span> &copy; 2026 <span
-                                        class="text-blue-600 dark:text-blue-400 font-bold">@dabeecao</span></p>
+                                        class="text-blue-600 dark:text-blue-400 font-bold">@hoanganhblog</span></p>
                             </div>
                         </div>
                     </div>
@@ -2915,44 +2893,6 @@
                     </div>
                 </div>
 
-                <div x-show="currentTab === 'changelog'" x-cloak
-                    class="max-w-3xl mx-auto py-4 md:py-6 animate-fade-in-up">
-                    <div
-                        class="bg-indigo-600 rounded-[1.5rem] p-6 text-white mb-6 shadow-xl shadow-indigo-500/20 relative overflow-hidden">
-                        <div class="absolute -right-10 -top-10 opacity-10 rotate-12">
-                            <i class="fa-solid fa-clock-rotate-left text-[10rem]"></i>
-                        </div>
-                        <h2 class="text-2xl font-bold mb-2 relative z-10" x-text="t('changelog')">Changelog</h2>
-                        <p class="text-sm text-indigo-100 relative z-10 max-w-lg"
-                            x-text="t('latest_release') + ': ' + (changelog[0]?.tag || '...')"></p>
-                    </div>
-
-                    <div class="space-y-6">
-                        <template x-for="rel in changelog" :key="rel.tag">
-                            <div class="glass-panel p-6 rounded-3xl border border-white/10 overflow-hidden">
-                                <div class="flex items-center justify-between mb-4">
-                                    <div class="flex items-center gap-3">
-                                        <div
-                                            class="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-500/10 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
-                                            <i class="fa-solid fa-tag text-xl"></i>
-                                        </div>
-                                        <div>
-                                            <h3 class="font-bold text-lg" x-text="rel.name || rel.tag"></h3>
-                                            <p class="text-xs text-slate-500" x-text="formatDate(rel.date)"></p>
-                                        </div>
-                                    </div>
-                                    <a :href="rel.url" target="_blank"
-                                        class="px-4 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-indigo-600 hover:text-white transition-all text-xs font-bold">
-                                        GitHub <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i>
-                                    </a>
-                                </div>
-                                <div class="changelog-body text-slate-600 dark:text-slate-300 text-sm overflow-x-auto break-words"
-                                    x-html="parseMarkdown(rel.body)"></div>
-                            </div>
-                        </template>
-                    </div>
-                </div>
-
                 <div x-show="currentTab === 'files'" x-transition.opacity>
                     <div x-show="isLoading" x-cloak class="space-y-4 w-full h-full p-4 animate-pulse">
                         <div class="h-12 bg-slate-200 dark:bg-slate-800 rounded-xl w-full"></div>
@@ -3333,7 +3273,7 @@
                             x-text="formatBytes(storageUsed)"></span>
                     </div>
                     <div class="flex items-center gap-1.5 hover:text-slate-900 dark:hover:text-white transition-colors">
-                        <a href="https://github.com/dabeecao/telecloud-go" target="_blank"
+                        <a href="https://github.com/hoanganhblog/drivecloud1" target="_blank"
                             class="flex items-center gap-1.5">
                             <i class="fa-brands fa-github text-sm"></i>
                             <span>GitHub</span>
@@ -3341,7 +3281,7 @@
                     </div>
                     <p class="font-medium">Drive <span class="font-bold text-slate-700 dark:text-slate-300"
                             x-text="TeleCloud.version"></span> &copy; 2026 <span
-                            class="text-blue-600 dark:text-blue-400">@dabeecao</span></p>
+                            class="text-blue-600 dark:text-blue-400">@hoanganhblog</span></p>
                 </div>
             </footer>
         </main>
@@ -3434,14 +3374,6 @@
                     <i class="fa-solid fa-gear text-xl"></i>
                 </button>
 
-                <button @click="currentTab = 'changelog'" x-show="updateAvailable" x-cloak
-                    class="flex-1 flex flex-col items-center py-3 transition-colors relative"
-                    :class="currentTab === 'changelog' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400'">
-                    <i class="fa-solid fa-clock-rotate-left text-xl"></i>
-                    <span
-                        class="absolute top-3 right-[calc(50%-0.75rem)] w-2.5 h-2.5 bg-red-500 border-2 border-white dark:border-slate-900 rounded-full animate-pulse"></span>
-                </button>
-
             </div>
         </nav>
     </div>
@@ -3456,8 +3388,7 @@
         <div class="flex items-center gap-1 md:gap-4 text-sm font-semibold text-slate-600 dark:text-slate-300">
 
             <button @click="downloadSelectedBatch" :title="t('download')"
-                :disabled="isOnlyFoldersSelected"
-                class="p-2.5 sm:px-3 sm:py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 transition flex items-center gap-2 whitespace-nowrap flex-shrink-0 disabled:opacity-40 disabled:pointer-events-none">
+                class="p-2.5 sm:px-3 sm:py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400 transition flex items-center gap-2 whitespace-nowrap flex-shrink-0">
                 <i class="fa-solid fa-download text-lg sm:text-base"></i>
                 <span class="hidden sm:block" x-text="t('download')"></span>
             </button>
