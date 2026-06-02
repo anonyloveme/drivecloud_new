@@ -30,28 +30,32 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 	})
 
 	tests := []struct {
-		name                string
-		method              string
-		path                string
-		expectXFrameOptions bool
+		name               string
+		method             string
+		path               string
+		expectXFrame       bool
+		expectCSP          bool
 	}{
 		{
-			name:                "CBZ Page - X-Frame-Options should be omitted",
-			method:              "GET",
-			path:                "/s/dummy-token/cbz/page",
-			expectXFrameOptions: false,
+			name:         "CBZ Page - X-Frame-Options SAMEORIGIN + strict CSP",
+			method:       "GET",
+			path:         "/s/dummy-token/cbz/page",
+			expectXFrame: true,
+			expectCSP:    true,
 		},
 		{
-			name:                "EPUB Resource - X-Frame-Options should be omitted",
-			method:              "GET",
-			path:                "/s/dummy-token/epub/resource/content.xhtml",
-			expectXFrameOptions: false,
+			name:         "EPUB Resource - X-Frame-Options SAMEORIGIN + strict CSP",
+			method:       "GET",
+			path:         "/s/dummy-token/epub/resource/content.xhtml",
+			expectXFrame: true,
+			expectCSP:    true,
 		},
 		{
-			name:                "Standard Shared Stream - X-Frame-Options should be SAMEORIGIN",
-			method:              "GET",
-			path:                "/s/dummy-token/stream",
-			expectXFrameOptions: true,
+			name:         "Standard Shared Stream - X-Frame-Options SAMEORIGIN, no special CSP",
+			method:       "GET",
+			path:         "/s/dummy-token/stream",
+			expectXFrame: true,
+			expectCSP:    false,
 		},
 	}
 
@@ -62,13 +66,27 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 			r.ServeHTTP(w, req)
 
 			xFrame := w.Header().Get("X-Frame-Options")
-			if tt.expectXFrameOptions {
+			if tt.expectXFrame {
 				if xFrame != "SAMEORIGIN" {
 					t.Errorf("expected X-Frame-Options to be SAMEORIGIN, got %q", xFrame)
 				}
 			} else {
 				if xFrame != "" {
 					t.Errorf("expected X-Frame-Options to be omitted, got %q", xFrame)
+				}
+			}
+
+			csp := w.Header().Get("Content-Security-Policy")
+			if tt.expectCSP {
+				if csp == "" {
+					t.Errorf("expected Content-Security-Policy to be set, got empty")
+				}
+				if csp != "default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; sandbox" {
+					t.Errorf("unexpected CSP: %q", csp)
+				}
+			} else {
+				if csp != "" {
+					t.Errorf("expected no Content-Security-Policy, got %q", csp)
 				}
 			}
 		})
