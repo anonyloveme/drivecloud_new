@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strconv"
 	"strings"
@@ -130,7 +131,7 @@ func (h *Handler) handleGetResetAdmin(c *gin.Context) {
 	dbToken := strings.TrimSpace(database.GetSetting("admin_reset_token"))
 	expiryStr := strings.TrimSpace(database.GetSetting("admin_reset_expiry"))
 
-	if token == "" || token != dbToken {
+	if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(dbToken)) != 1 {
 		c.String(http.StatusForbidden, "Invalid token")
 		return
 	}
@@ -157,7 +158,7 @@ func (h *Handler) handlePostResetAdmin(c *gin.Context) {
 	dbToken := strings.TrimSpace(database.GetSetting("admin_reset_token"))
 	expiryStr := strings.TrimSpace(database.GetSetting("admin_reset_expiry"))
 
-	if token == "" || token != dbToken {
+	if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(dbToken)) != 1 {
 		c.JSON(http.StatusForbidden, gin.H{"error": "invalid_token"})
 		return
 	}
