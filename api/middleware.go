@@ -27,11 +27,40 @@ type chunkState struct {
 var (
 	chunkTrackerSync sync.Map // map[string]*chunkState
 	loginAttempts    sync.Map
+	publicRL         sync.Map // map[string]*publicRateEntry
 )
 
 type loginAttempt struct {
 	count int
 	last  time.Time
+}
+
+type publicRateEntry struct {
+	count    int
+	windowStart time.Time
+}
+
+// publicRateLimit returns a gin middleware that limits requests per IP for
+// public heavy endpoints (streaming, download, cbz/epub). 60 req/min per IP.
+func publicRateLimit() gin.HandlerFunc {
+	const maxReq = 60
+	const window = time.Minute
+	return func(c *gin.Context) {
+		ip := c.ClientIP()
+		now := time.Now()
+		val, _ := publicRL.LoadOrStore(ip, &publicRateEntry{})
+		entry := val.(*publicRateEntry)
+		if now.Sub(entry.windowStart) > window {
+			entry.count = 0
+			entry.windowStart = now
+		}
+		entry.count++
+		if entry.count > maxReq {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "rate_limit_exceeded"})
+			return
+		}
+		c.Next()
+	}
 }
 
 const csrfCookieName = "csrf_token"
