@@ -214,17 +214,27 @@ func (fs *telecloudFS) RemoveAll(ctx context.Context, name string) error {
 		return os.ErrNotExist
 	}
 
+	tx, err := database.DB.Beginx()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
 	now := time.Now()
 	if item.IsFolder {
 		oldPrefix := item.Path + "/" + item.Filename
 		if item.Path == "/" {
 			oldPrefix = "/" + item.Filename
 		}
-		database.DB.Exec("UPDATE files SET deleted_at = ? WHERE (path = ? OR path LIKE ?) AND owner = ? AND deleted_at IS NULL", now, oldPrefix, oldPrefix+"/%", username)
+		if _, err := tx.Exec("UPDATE files SET deleted_at = ? WHERE (path = ? OR path LIKE ?) AND owner = ? AND deleted_at IS NULL", now, oldPrefix, oldPrefix+"/%", username); err != nil {
+			return err
+		}
 	}
-	database.DB.Exec("UPDATE files SET deleted_at = ? WHERE id = ?", now, item.ID)
+	if _, err := tx.Exec("UPDATE files SET deleted_at = ? WHERE id = ?", now, item.ID); err != nil {
+		return err
+	}
 
-	return nil
+	return tx.Commit()
 }
 
 func (fs *telecloudFS) Rename(ctx context.Context, oldName, newName string) error {

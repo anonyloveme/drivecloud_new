@@ -757,16 +757,33 @@ func (h *Handler) handleDeleteFile(c *gin.Context) {
 		return
 	}
 
+	tx, err := database.DB.Beginx()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db_error"})
+		return
+	}
+	defer tx.Rollback()
+
 	now := time.Now()
 	if item.IsFolder {
 		oldPrefix := item.Path + "/" + item.Filename
 		if item.Path == "/" {
 			oldPrefix = "/" + item.Filename
 		}
-		database.DB.Exec("UPDATE files SET deleted_at = ? WHERE (path = ? OR path LIKE ?) AND owner = ? AND deleted_at IS NULL", now, oldPrefix, oldPrefix+"/%", item.Owner)
+		if _, err := tx.Exec("UPDATE files SET deleted_at = ? WHERE (path = ? OR path LIKE ?) AND owner = ? AND deleted_at IS NULL", now, oldPrefix, oldPrefix+"/%", item.Owner); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db_error"})
+			return
+		}
 	}
-	database.DB.Exec("UPDATE files SET deleted_at = ? WHERE id = ?", now, id)
+	if _, err := tx.Exec("UPDATE files SET deleted_at = ? WHERE id = ?", now, id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db_error"})
+		return
+	}
 
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db_error"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "moved_to_trash"})
 }
 
@@ -925,7 +942,6 @@ func (h *Handler) handleEmptyTrash(c *gin.Context) {
 	// Delete thumbnails
 	for _, item := range items {
 		if item.ThumbPath != nil && *item.ThumbPath != "" {
-			// Check if other files use the same thumb (unlikely for trash items, but safe)
 			var count int
 			database.RODB.Get(&count, "SELECT COUNT(*) FROM files WHERE thumb_path = ? AND id NOT IN ("+strings.Trim(strings.Join(strings.Fields(fmt.Sprint(fileIDs)), ","), "[]")+")", *item.ThumbPath)
 			if count == 0 {
@@ -939,11 +955,26 @@ func (h *Handler) handleEmptyTrash(c *gin.Context) {
 		go tgclient.DeleteMessages(context.Background(), h.cfg, msgIDsToDelete)
 	}
 
-	// Delete from DB
+	// Delete from DB in a transaction
+	tx, err := database.DB.Beginx()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db_error"})
+		return
+	}
+	defer tx.Rollback()
+
 	query, args, err := sqlx.In("DELETE FROM files WHERE id IN (?)", fileIDs)
 	if err == nil {
-		query = database.DB.Rebind(query)
-		database.DB.Exec(query, args...)
+		query = tx.Rebind(query)
+		if _, err := tx.Exec(query, args...); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db_error"})
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db_error"})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "trash_emptied"})
@@ -995,18 +1026,30 @@ func (h *Handler) handlePermanentDeleteFile(c *gin.Context) {
 		}
 	}
 
-	// Delete from DB
+	// Delete from DB in a transaction
+	tx, err := database.DB.Beginx()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db_error"})
+		return
+	}
+	defer tx.Rollback()
+
 	if item.ShareToken != nil {
-		database.DB.Exec("DELETE FROM share_sessions WHERE share_token = ?", *item.ShareToken)
+		tx.Exec("DELETE FROM share_sessions WHERE share_token = ?", *item.ShareToken)
 	}
 	if item.IsFolder {
 		oldPrefix := item.Path + "/" + item.Filename
 		if item.Path == "/" {
 			oldPrefix = "/" + item.Filename
 		}
-		database.DB.Exec("DELETE FROM files WHERE (path = ? OR path LIKE ?) AND owner = ?", oldPrefix, oldPrefix+"/%", item.Owner)
+		tx.Exec("DELETE FROM files WHERE (path = ? OR path LIKE ?) AND owner = ?", oldPrefix, oldPrefix+"/%", item.Owner)
 	}
-	database.DB.Exec("DELETE FROM files WHERE id = ?", id)
+	tx.Exec("DELETE FROM files WHERE id = ?", id)
+
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db_error"})
+		return
+	}
 
 	// Delete from Telegram
 	if len(msgIDsToDelete) > 0 {
