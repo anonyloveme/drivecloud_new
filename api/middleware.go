@@ -89,12 +89,13 @@ func csrfMiddleware() gin.HandlerFunc {
 func securityHeadersMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "SAMEORIGIN")
 
 		path := c.Request.URL.Path
 		isEpubResource := strings.Contains(path, "/epub/resource/")
 		isComicPage := strings.Contains(path, "/cbz/page")
-		if !isEpubResource && !isComicPage {
-			c.Header("X-Frame-Options", "SAMEORIGIN")
+		if isEpubResource || isComicPage {
+			c.Header("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; sandbox")
 		}
 
 		c.Header("Cross-Origin-Resource-Policy", "cross-origin")
