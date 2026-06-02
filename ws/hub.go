@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
+
+	"telecloud/database"
 
 	"github.com/coder/websocket"
 )
@@ -113,8 +116,26 @@ func GetHub() *Hub {
 }
 
 func HandleWebSocket(w http.ResponseWriter, r *http.Request, username string) {
+	siteURL := strings.TrimRight(database.GetSetting("site_url"), "/")
+	origin := r.Header.Get("Origin")
+
+	if siteURL != "" && origin != "" {
+		originHost := origin
+		if idx := strings.Index(origin, "://"); idx != -1 {
+			originHost = origin[idx+3:]
+		}
+		siteHost := siteURL
+		if idx := strings.Index(siteURL, "://"); idx != -1 {
+			siteHost = siteURL[idx+3:]
+		}
+		if !strings.EqualFold(originHost, siteHost) {
+			http.Error(w, "Forbidden: origin mismatch", http.StatusForbidden)
+			return
+		}
+	}
+
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true, // In a real app, you might want to check Origin
+		InsecureSkipVerify: false,
 	})
 	if err != nil {
 		log.Printf("websocket accept error: %v", err)
