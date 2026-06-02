@@ -1,0 +1,64 @@
+# Binaries and executables
+/telecloud
+/telecloud.exe
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+dist/
+
+# Environment and Secrets
+.env
+master.key
+session.json
+
+# Database and data
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+data/
+
+# Media and Generated Assets
+static/thumbs/*
+!static/thumbs/.gitkeep
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Go dependencies
+vendor/
+
+# Tailwind & Frontend
+tailwindcss
+static/css/tailwind.css
+static/css/plyr.css
+static/js/plyr.polyfilled.js
+static/js/alpine.min.js
+static/js/alpine-collapse.min.js
+static/css/prism.css
+static/js/prism.js
+node_modules/
+static/js/*.min.js
+static/css/*.min.css
+
+# Build test folder
+build/*
+scratch/
+telecloud-frontend-main/
+
+# Docs
+ARCHITECTURE.md

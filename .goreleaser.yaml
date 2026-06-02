@@ -1,0 +1,67 @@
+# .goreleaser.yaml
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: nix
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "7"
+    binary: telecloud
+    main: .
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}} -X telecloud/config.DefaultAPIIDStr={{.Env.DEFAULT_API_ID}} -X telecloud/config.DefaultAPIHash={{.Env.DEFAULT_API_HASH}}
+
+  - id: win
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    binary: telecloud
+    main: .
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}} -X telecloud/config.DefaultAPIIDStr={{.Env.DEFAULT_API_ID}} -X telecloud/config.DefaultAPIHash={{.Env.DEFAULT_API_HASH}}
+
+archives:
+  - id: nix
+    ids: [nix]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
+
+  - id: win
+    ids: [win]
+    formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+
+release:
+  github:
+    owner: dabeecao
+    name: telecloud-go
+  prerelease: auto

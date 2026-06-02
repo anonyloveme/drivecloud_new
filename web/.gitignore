@@ -1,0 +1,24 @@
+# Binaries
+tailwindcss
+*.exe
+*.bin
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Dependencies
+node_modules/
+
+# --- Build artifacts & Generated Assets ---
+static/css/*.min.css
+static/themes/*.min.css
+static/js/*.min.js
+static/locales/*.min.json
+static/css/tailwind.css
+static/webfonts/
+
+
+# Logs
+*.log
+bun.lock
