@@ -308,6 +308,23 @@
                         </button>
                     </template>
 
+                    <!-- Office Document Viewer Button (docx/xlsx/pptx → PDF) -->
+                    <template x-if="fileInfoModal.typeName === 'type_doc' && !fileInfoModal.is_folder && /\.(docx?|xlsx?|pptx?|odt|ods|odp|rtf)$/i.test(fileInfoModal.file?.filename || '') && (!fileInfoModal.tooLarge || fileInfoModal.bypassWarning)">
+                        <button @click="openOfficeViewer(fileInfoModal.file); closeFileInfoModal()"
+                            class="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold shadow-lg shadow-blue-500/25 transition-all duration-300 transform active:scale-95">
+                            <i class="fa-solid fa-file-word"></i> <span x-text="t('view_document')"></span>
+                        </button>
+                    </template>
+
+                    <!-- Text/Code/Markdown Reader Button -->
+                    <template x-if="fileInfoModal.typeName === 'type_text' && !fileInfoModal.is_folder && (!fileInfoModal.tooLarge || fileInfoModal.bypassWarning)">
+                        <button @click="openDocViewer(fileInfoModal.file); closeFileInfoModal()"
+                            class="w-full flex items-center gap-3 px-5 py-4 rounded-2xl bg-gradient-to-r from-slate-500 to-gray-600 text-white font-bold shadow-lg shadow-slate-500/25 hover:shadow-xl hover:shadow-slate-500/30 transition-all active:scale-[0.98]">
+                            <i class="fa-solid fa-file-lines text-xl"></i>
+                            <span x-text="t('view_document')"></span>
+                        </button>
+                    </template>
+
                     <!-- Premium Play Button for Video/Audio -->
                     <template x-if="(fileInfoModal.typeName === 'type_video' || fileInfoModal.typeName === 'type_audio') && (!fileInfoModal.tooLarge || fileInfoModal.bypassWarning)">
                         <button @click="openMediaPlayer(fileInfoModal.file)"
@@ -1741,6 +1758,62 @@
         </footer>
     </div>
 
+
+    <!-- Document Viewer Modal (Markdown/Text/Code) -->
+    <div x-show="docViewer.show" x-cloak
+        class="fixed inset-0 z-[600] bg-white dark:bg-slate-900 flex flex-col"
+        @keydown.escape.window="closeDocViewer()" x-transition.opacity>
+        <!-- Header -->
+        <div class="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 shrink-0">
+            <div class="flex items-center gap-3 min-w-0">
+                <button @click="closeDocViewer()" class="p-2 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+                    <i class="fa-solid fa-arrow-left text-slate-600 dark:text-slate-300"></i>
+                </button>
+                <div class="min-w-0">
+                    <h2 class="text-sm font-bold text-slate-800 dark:text-slate-200 truncate" x-text="docViewer.file?.filename || ''"></h2>
+                    <p class="text-xs text-slate-500 dark:text-slate-400" x-text="docViewer.type === 'markdown' ? 'Markdown' : docViewer.type === 'csv' ? 'CSV Table' : docViewer.type === 'office' ? 'Office Document' : 'Text / Code'"></p>
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <a :href="'/download/' + (docViewer.file?.id || '')" target="_blank"
+                    class="p-2 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" title="Download">
+                    <i class="fa-solid fa-download text-slate-600 dark:text-slate-300"></i>
+                </a>
+            </div>
+        </div>
+        <!-- Content -->
+        <div class="flex-1 overflow-auto">
+            <div x-show="docViewer.loading" class="flex items-center justify-center h-full">
+                <div class="text-center">
+                    <i class="fa-solid fa-spinner fa-spin text-3xl text-blue-500 mb-3"></i>
+                    <p class="text-sm text-slate-500" x-text="t('loading') || 'Loading...'"></p>
+                </div>
+            </div>
+            <div x-show="!docViewer.loading && docViewer.error" class="flex items-center justify-center h-full">
+                <div class="text-center p-8">
+                    <i class="fa-solid fa-triangle-exclamation text-3xl text-red-500 mb-3"></i>
+                    <p class="text-sm text-red-500" x-text="docViewer.error"></p>
+                </div>
+            </div>
+            <div x-show="!docViewer.loading && !docViewer.error && docViewer.type === 'markdown'"
+                class="prose prose-slate dark:prose-invert max-w-none p-6 md:p-10"
+                x-html="docViewer.content"
+                style="line-height: 1.7;">
+            </div>
+            <div x-show="!docViewer.loading && !docViewer.error && docViewer.type === 'csv'"
+                class="p-6 md:p-10"
+                x-html="docViewer.content">
+            </div>
+            <div x-show="!docViewer.loading && !docViewer.error && docViewer.type === 'office'"
+                class="flex-1 overflow-auto bg-white dark:bg-slate-900"
+                id="office-viewer-container">
+            </div>
+            <div x-show="!docViewer.loading && !docViewer.error && docViewer.type === 'text'"
+                class="p-0">
+                <pre class="p-6 md:p-10 text-sm leading-relaxed font-mono overflow-x-auto whitespace-pre-wrap break-words bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200"><code x-html="docViewer.content"></code></pre>
+            </div>
+        </div>
+    </div>
 
     <!-- ==================== PDF READER MODAL ==================== -->
     <div x-show="pdfViewer.show" x-cloak

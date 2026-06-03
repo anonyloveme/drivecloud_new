@@ -1420,6 +1420,7 @@ function cloudApp(initialIsLoggedIn, isAdmin = true, storageUsed = 0, webdavEnab
         comicViewer: { show: false, file: null, pages: [], pageUrls: [], currentPageIndex: 0, loading: false, fitMode: 'height', pageLoading: false, scrollMode: 'page', autoScrollActive: false, autoScrollSpeed: 2, settingsOpen: false, direction: 'ltr', viewMode: 'single', filter: 'none', zoomActive: false, touchStartX: 0, touchStartY: 0 },
         epubViewer: { show: false, file: null, loading: false, sidebarOpen: false, toc: [], fontSize: 100, pageProgress: 0, scrollMode: 'scrolled', autoScrollActive: false, autoScrollSpeed: 2, settingsOpen: false, spine: [], resourceBaseUrl: '', currentChapter: 0, title: '', theme: 'system', fontFamily: 'sans-serif' },
         pdfViewer: { show: false, file: null, loading: false, sidebarOpen: false, toc: [], zoom: 100, pageProgress: 0, settingsOpen: false, currentPage: 1, numPages: 0, darkModeFilter: false, pageLoading: false, autoScrollActive: false, autoScrollSpeed: 2, scrollMode: 'page' },
+        docViewer: { show: false, file: null, loading: false, content: '', type: 'text', error: '' },
         fileInfoModal: { show: false, file: null, typeName: '', ext: '', svgIcon: '', bgColor: '', isMedia: false, mediaHtml: '', isLarge: false, isPreviewLoading: false, needsLoad: false, tooLarge: false, bypassWarning: false, unsupportedMedia: false },
         mediaPlayerModal: { show: false, file: null, isAudio: false, isPlaying: false, minimized: false, x: null, y: null, playlist: [], playlistIndex: -1, playlistOpen: false },
         modal: { show: false, type: 'alert', title: '', message: '', input: '', resolve: null, isDanger: false, inputType: 'text', applyToAll: false },
@@ -4653,6 +4654,120 @@ function cloudApp(initialIsLoggedIn, isAdmin = true, storageUsed = 0, webdavEnab
         changeEpubAutoScrollSpeed(amount) {
             this.epubViewer.autoScrollSpeed = Math.max(1, Math.min(10, this.epubViewer.autoScrollSpeed + amount));
         },
+        async openDocViewer(file) {
+            if (!file) return;
+            const ext = file.filename.split('.').pop().toLowerCase();
+            const mdExts = ['md', 'markdown', 'mdx'];
+            const isMarkdown = mdExts.includes(ext);
+            
+            this.docViewer = { show: true, file, loading: true, content: '', type: isMarkdown ? 'markdown' : 'text', error: '' };
+            
+            try {
+                const token = this.shareToken || this.token || '';
+                let downloadUrl;
+                if (token) {
+                    if (file && file.id) {
+                        downloadUrl = `/s/${token}/file/${file.id}/stream`;
+                    } else {
+                        downloadUrl = `/s/${token}/stream`;
+                    }
+                } else {
+                    downloadUrl = `/download/${file.id}`;
+                }
+                const resp = await fetch(downloadUrl, { credentials: 'same-origin' });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                let text = await resp.text();
+                
+                if (isMarkdown) {
+                    await Promise.all([TeleCloud.ensureMarkedLoaded(), TeleCloud.ensurePurifyLoaded()]);
+                    const rawHtml = window.marked.parse(text);
+                    this.docViewer.content = window.DOMPurify.sanitize(rawHtml, { USE_PROFILES: { html: true } });
+                } else if (ext === 'csv') {
+                    this.docViewer.type = 'csv';
+                    const parseCSV = (raw) => {
+                        const rows = []; let row = []; let cell = ''; let inQuotes = false;
+                        for (let i = 0; i < raw.length; i++) {
+                            const ch = raw[i], next = raw[i+1];
+                            if (inQuotes) { if (ch === '"' && next === '"') { cell += '"'; i++; } else if (ch === '"') { inQuotes = false; } else { cell += ch; } }
+                            else { if (ch === '"') { inQuotes = true; } else if (ch === ',') { row.push(cell); cell = ''; } else if (ch === '\n' || (ch === '\r' && next === '\n')) { row.push(cell); cell = ''; if (row.some(c => c !== '')) rows.push(row); row = []; if (ch === '\r') i++; } else { cell += ch; } }
+                        }
+                        row.push(cell); if (row.some(c => c !== '')) rows.push(row);
+                        return rows;
+                    };
+                    const rows = parseCSV(text);
+                    if (rows.length === 0) { this.docViewer.content = '<p class="text-slate-400 italic">Empty file</p>'; }
+                    else {
+                        const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                        const header = rows[0];
+                        let html = '<div class="overflow-x-auto"><table class="w-full text-sm border-collapse">';
+                        html += '<thead><tr>' + header.map(h => `<th class="px-3 py-2 text-left font-bold bg-slate-100 dark:bg-slate-800 border-b-2 border-slate-300 dark:border-slate-600 sticky top-0">${esc(h)}</th>`).join('') + '</tr></thead>';
+                        html += '<tbody>';
+                        for (let r = 1; r < rows.length; r++) {
+                            const cls = r % 2 === 0 ? 'bg-slate-50 dark:bg-slate-800/50' : '';
+                            html += '<tr class="' + cls + '">' + rows[r].map(c => `<td class="px-3 py-1.5 border-b border-slate-200 dark:border-slate-700">${esc(c)}</td>`).join('') + '</tr>';
+                        }
+                        html += '</tbody></table></div>';
+                        html += `<p class="text-xs text-slate-400 mt-3">${rows.length - 1} rows × ${header.length} columns</p>`;
+                        this.docViewer.content = html;
+                    }
+                } else {
+                    await ensurePrismLoaded();
+                    const langMap = {
+                        'js': 'javascript', 'ts': 'typescript', 'py': 'python', 'rb': 'ruby',
+                        'sh': 'bash', 'bash': 'bash', 'zsh': 'bash', 'yml': 'yaml', 'yaml': 'yaml',
+                        'json': 'json', 'xml': 'xml', 'html': 'html', 'htm': 'html', 'css': 'css',
+                        'go': 'go', 'rs': 'rust', 'java': 'java', 'c': 'c', 'cpp': 'cpp', 'h': 'c',
+                        'cs': 'csharp', 'php': 'php', 'sql': 'sql', 'swift': 'swift', 'kt': 'kotlin',
+                        'ini': 'ini', 'toml': 'ini', 'conf': 'ini', 'cfg': 'ini', 'log': 'log',
+                        'csv': 'csv', 'txt': 'plaintext', 'env': 'plaintext', 'dockerfile': 'docker',
+                        'makefile': 'makefile', 'r': 'r', 'lua': 'lua', 'vim': 'vim', 'graphql': 'graphql',
+                        'proto': 'protobuf', 'tf': 'hcl', 'nix': 'nix',
+                    };
+                    const lang = langMap[ext] || 'plaintext';
+                    const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                    const highlighted = (window.Prism && window.Prism.languages[lang])
+                        ? window.Prism.highlight(escaped, window.Prism.languages[lang], lang)
+                        : escaped;
+                    this.docViewer.content = highlighted;
+                }
+            } catch (e) {
+                console.error('Doc viewer error:', e);
+                this.docViewer.error = e.message || 'Failed to load file';
+                this.docViewer.content = '';
+            } finally {
+                this.docViewer.loading = false;
+            }
+        },
+        closeDocViewer() {
+            if (window.VueOffice) window.VueOffice.destroy();
+            this.docViewer = { show: false, file: null, loading: false, content: '', type: 'text', error: '' };
+        },
+        async openOfficeViewer(file) {
+            if (!file) return;
+            const ext = file.filename.split('.').pop().toLowerCase();
+            const supported = ['docx', 'xlsx', 'xls', 'pptx'];
+            if (!supported.includes(ext)) {
+                window.open(`/download/${file.id}`, '_blank');
+                return;
+            }
+            this.docViewer = { show: true, file, loading: true, content: '', type: 'office', error: '' };
+            try {
+                await TeleCloud.ensureOfficeLoaded();
+                const downloadUrl = `/download/${file.id}`;
+                const resp = await fetch(downloadUrl, { credentials: 'same-origin' });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const arrayBuffer = await resp.arrayBuffer();
+                await this.$nextTick();
+                const container = document.getElementById('office-viewer-container');
+                if (!container) throw new Error('Viewer container not found');
+                window.VueOffice.render(container, ext, arrayBuffer);
+                this.docViewer.loading = false;
+            } catch (e) {
+                console.error('Office viewer error:', e);
+                this.docViewer.loading = false;
+                this.docViewer.error = e.message || 'Failed to render document';
+            }
+        },
         openPdfViewer(file, isShare = false, shareToken = '') {
             this.pdfViewer.show = true;
             this.pdfViewer.file = file;
@@ -5353,7 +5468,7 @@ function cloudApp(initialIsLoggedIn, isAdmin = true, storageUsed = 0, webdavEnab
             const imgExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'heic', 'heif'];
             const videoExts = ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'ogv', '3gp', 'flv', 'wmv'];
             const audioExts = ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'opus', 'oga', 'aac', 'm4b'];
-            const textExts = ['txt', 'md', 'log', 'json', 'js', 'py', 'go', 'html', 'css', 'yml', 'yaml', 'sql', 'sh', 'conf', 'ini', 'c', 'cpp', 'h', 'hpp', 'cs', 'java', 'rb', 'rs', 'swift'];
+            const textExts = ['txt', 'md', 'log', 'json', 'js', 'py', 'go', 'html', 'css', 'yml', 'yaml', 'sql', 'sh', 'conf', 'ini', 'c', 'cpp', 'h', 'hpp', 'cs', 'java', 'rb', 'rs', 'swift', 'csv'];
             const isComicOrEpubOrPdf = (typeData.n === 'type_comic' || typeData.n === 'type_epub' || typeData.n === 'type_pdf');
             const isTooLarge = (imgExts.includes(ext) && file.size > 50 * 1024 * 1024) || 
                                (isComicOrEpubOrPdf && file.size > 150 * 1024 * 1024) || 
@@ -6020,6 +6135,7 @@ function shareApp() {
         comicViewer: { show: false, file: null, pages: [], pageUrls: [], currentPageIndex: 0, loading: false, fitMode: 'height', pageLoading: false, scrollMode: 'page', autoScrollActive: false, autoScrollSpeed: 2, settingsOpen: false, direction: 'ltr', viewMode: 'single', filter: 'none', zoomActive: false, touchStartX: 0, touchStartY: 0 },
         epubViewer: { show: false, file: null, loading: false, sidebarOpen: false, toc: [], fontSize: 100, pageProgress: 0, scrollMode: 'scrolled', autoScrollActive: false, autoScrollSpeed: 2, settingsOpen: false, spine: [], resourceBaseUrl: '', currentChapter: 0, title: '', theme: 'system', fontFamily: 'sans-serif' },
         pdfViewer: { show: false, file: null, loading: false, sidebarOpen: false, toc: [], zoom: 100, pageProgress: 0, settingsOpen: false, currentPage: 1, numPages: 0, darkModeFilter: false, pageLoading: false, autoScrollActive: false, autoScrollSpeed: 2, scrollMode: 'page' },
+        docViewer: { show: false, file: null, loading: false, content: '', type: 'text', error: '' },
         fileInfoModal: { show: false, file: null, typeName: '', ext: '', svgIcon: '', bgColor: '', isMedia: false, mediaHtml: '', isLarge: false, isPreviewLoading: false, needsLoad: false, tooLarge: false, bypassWarning: false, unsupportedMedia: false },
         mediaPlayerModal: { show: false, file: null, isAudio: false, isPlaying: false, minimized: false, x: null, y: null, playlist: [], playlistIndex: -1, playlistOpen: false },
         contextMenu: { show: false, x: 0, y: 0, file: null },
@@ -7593,6 +7709,126 @@ function shareApp() {
         changeEpubAutoScrollSpeed(amount) {
             this.epubViewer.autoScrollSpeed = Math.max(1, Math.min(10, this.epubViewer.autoScrollSpeed + amount));
         },
+        async openDocViewer(file) {
+            if (!file) return;
+            const ext = file.filename.split('.').pop().toLowerCase();
+            const mdExts = ['md', 'markdown', 'mdx'];
+            const isMarkdown = mdExts.includes(ext);
+            
+            this.docViewer = { show: true, file, loading: true, content: '', type: isMarkdown ? 'markdown' : 'text', error: '' };
+            
+            try {
+                const token = this.shareToken || this.token || '';
+                let downloadUrl;
+                if (token) {
+                    if (file && file.id) {
+                        downloadUrl = `/s/${token}/file/${file.id}/stream`;
+                    } else {
+                        downloadUrl = `/s/${token}/stream`;
+                    }
+                } else {
+                    downloadUrl = `/download/${file.id}`;
+                }
+                const resp = await fetch(downloadUrl, { credentials: 'same-origin' });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                let text = await resp.text();
+                
+                if (isMarkdown) {
+                    await Promise.all([TeleCloud.ensureMarkedLoaded(), TeleCloud.ensurePurifyLoaded()]);
+                    const rawHtml = window.marked.parse(text);
+                    this.docViewer.content = window.DOMPurify.sanitize(rawHtml, { USE_PROFILES: { html: true } });
+                } else if (ext === 'csv') {
+                    this.docViewer.type = 'csv';
+                    const parseCSV = (raw) => {
+                        const rows = []; let row = []; let cell = ''; let inQuotes = false;
+                        for (let i = 0; i < raw.length; i++) {
+                            const ch = raw[i], next = raw[i+1];
+                            if (inQuotes) { if (ch === '"' && next === '"') { cell += '"'; i++; } else if (ch === '"') { inQuotes = false; } else { cell += ch; } }
+                            else { if (ch === '"') { inQuotes = true; } else if (ch === ',') { row.push(cell); cell = ''; } else if (ch === '\n' || (ch === '\r' && next === '\n')) { row.push(cell); cell = ''; if (row.some(c => c !== '')) rows.push(row); row = []; if (ch === '\r') i++; } else { cell += ch; } }
+                        }
+                        row.push(cell); if (row.some(c => c !== '')) rows.push(row);
+                        return rows;
+                    };
+                    const rows = parseCSV(text);
+                    if (rows.length === 0) { this.docViewer.content = '<p class="text-slate-400 italic">Empty file</p>'; }
+                    else {
+                        const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                        const header = rows[0];
+                        let html = '<div class="overflow-x-auto"><table class="w-full text-sm border-collapse">';
+                        html += '<thead><tr>' + header.map(h => `<th class="px-3 py-2 text-left font-bold bg-slate-100 dark:bg-slate-800 border-b-2 border-slate-300 dark:border-slate-600 sticky top-0">${esc(h)}</th>`).join('') + '</tr></thead>';
+                        html += '<tbody>';
+                        for (let r = 1; r < rows.length; r++) {
+                            const cls = r % 2 === 0 ? 'bg-slate-50 dark:bg-slate-800/50' : '';
+                            html += '<tr class="' + cls + '">' + rows[r].map(c => `<td class="px-3 py-1.5 border-b border-slate-200 dark:border-slate-700">${esc(c)}</td>`).join('') + '</tr>';
+                        }
+                        html += '</tbody></table></div>';
+                        html += `<p class="text-xs text-slate-400 mt-3">${rows.length - 1} rows × ${header.length} columns</p>`;
+                        this.docViewer.content = html;
+                    }
+                } else {
+                    await ensurePrismLoaded();
+                    const langMap = {
+                        'js': 'javascript', 'ts': 'typescript', 'py': 'python', 'rb': 'ruby',
+                        'sh': 'bash', 'bash': 'bash', 'zsh': 'bash', 'yml': 'yaml', 'yaml': 'yaml',
+                        'json': 'json', 'xml': 'xml', 'html': 'html', 'htm': 'html', 'css': 'css',
+                        'go': 'go', 'rs': 'rust', 'java': 'java', 'c': 'c', 'cpp': 'cpp', 'h': 'c',
+                        'cs': 'csharp', 'php': 'php', 'sql': 'sql', 'swift': 'swift', 'kt': 'kotlin',
+                        'ini': 'ini', 'toml': 'ini', 'conf': 'ini', 'cfg': 'ini', 'log': 'log',
+                        'csv': 'csv', 'txt': 'plaintext', 'env': 'plaintext', 'dockerfile': 'docker',
+                        'makefile': 'makefile', 'r': 'r', 'lua': 'lua', 'vim': 'vim', 'graphql': 'graphql',
+                        'proto': 'protobuf', 'tf': 'hcl', 'nix': 'nix',
+                    };
+                    const lang = langMap[ext] || 'plaintext';
+                    const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                    const highlighted = (window.Prism && window.Prism.languages[lang])
+                        ? window.Prism.highlight(escaped, window.Prism.languages[lang], lang)
+                        : escaped;
+                    this.docViewer.content = highlighted;
+                }
+            } catch (e) {
+                console.error('Doc viewer error:', e);
+                this.docViewer.error = e.message || 'Failed to load file';
+                this.docViewer.content = '';
+            } finally {
+                this.docViewer.loading = false;
+            }
+        },
+        closeDocViewer() {
+            if (window.VueOffice) window.VueOffice.destroy();
+            this.docViewer = { show: false, file: null, loading: false, content: '', type: 'text', error: '' };
+        },
+        async openOfficeViewer(file) {
+            if (!file) return;
+            const ext = file.filename.split('.').pop().toLowerCase();
+            const supported = ['docx', 'xlsx', 'xls', 'pptx'];
+            if (!supported.includes(ext)) {
+                window.open(`/download/${file.id}`, '_blank');
+                return;
+            }
+            this.docViewer = { show: true, file, loading: true, content: '', type: 'office', error: '' };
+            try {
+                await TeleCloud.ensureOfficeLoaded();
+                const token = this.shareToken || this.token || '';
+                let downloadUrl;
+                if (token) {
+                    downloadUrl = file && file.id ? `/s/${token}/file/${file.id}/stream` : `/s/${token}/stream`;
+                } else {
+                    downloadUrl = `/download/${file.id}`;
+                }
+                const resp = await fetch(downloadUrl, { credentials: 'same-origin' });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const arrayBuffer = await resp.arrayBuffer();
+                await this.$nextTick();
+                const container = document.getElementById('office-viewer-container');
+                if (!container) throw new Error('Viewer container not found');
+                window.VueOffice.render(container, ext, arrayBuffer);
+                this.docViewer.loading = false;
+            } catch (e) {
+                console.error('Office viewer error:', e);
+                this.docViewer.loading = false;
+                this.docViewer.error = e.message || 'Failed to render document';
+            }
+        },
         openPdfViewer(file, isShare = false, shareToken = '') {
             this.pdfViewer.show = true;
             this.pdfViewer.file = file;
@@ -8290,7 +8526,7 @@ function shareApp() {
             const imgExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'heic', 'heif'];
             const videoExts = ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'ogv', '3gp', 'flv', 'wmv'];
             const audioExts = ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'opus', 'oga', 'aac', 'm4b'];
-            const textExts = ['txt', 'md', 'log', 'json', 'js', 'py', 'go', 'html', 'css', 'yml', 'yaml', 'sql', 'sh', 'conf', 'ini', 'c', 'cpp', 'h', 'hpp', 'cs', 'java', 'rb', 'rs', 'swift'];
+            const textExts = ['txt', 'md', 'log', 'json', 'js', 'py', 'go', 'html', 'css', 'yml', 'yaml', 'sql', 'sh', 'conf', 'ini', 'c', 'cpp', 'h', 'hpp', 'cs', 'java', 'rb', 'rs', 'swift', 'csv'];
             const isComicOrEpubOrPdf = (typeData.n === 'type_comic' || typeData.n === 'type_epub' || typeData.n === 'type_pdf');
             const isTooLarge = (imgExts.includes(ext) && file.size > 50 * 1024 * 1024) || 
                                (isComicOrEpubOrPdf && file.size > 150 * 1024 * 1024) || 
@@ -8386,6 +8622,7 @@ function shareFileApp() {
         comicViewer: { show: false, file: null, pages: [], pageUrls: [], currentPageIndex: 0, loading: false, fitMode: 'height', pageLoading: false, scrollMode: 'page', autoScrollActive: false, autoScrollSpeed: 2, settingsOpen: false, direction: 'ltr', viewMode: 'single', filter: 'none', zoomActive: false, touchStartX: 0, touchStartY: 0 },
         epubViewer: { show: false, file: null, loading: false, sidebarOpen: false, toc: [], fontSize: 100, pageProgress: 0, scrollMode: 'scrolled', autoScrollActive: false, autoScrollSpeed: 2, settingsOpen: false, spine: [], resourceBaseUrl: '', currentChapter: 0, title: '', theme: 'system', fontFamily: 'sans-serif' },
         pdfViewer: { show: false, file: null, loading: false, sidebarOpen: false, toc: [], zoom: 100, pageProgress: 0, settingsOpen: false, currentPage: 1, numPages: 0, darkModeFilter: false, pageLoading: false, autoScrollActive: false, autoScrollSpeed: 2, scrollMode: 'page' },
+        docViewer: { show: false, file: null, loading: false, content: '', type: 'text', error: '' },
         toastModal: { show: false, message: '', type: 'success', persistent: false },
         toastTimeout: null,
         
@@ -9334,6 +9571,126 @@ function shareFileApp() {
         changeEpubAutoScrollSpeed(amount) {
             this.epubViewer.autoScrollSpeed = Math.max(1, Math.min(10, this.epubViewer.autoScrollSpeed + amount));
         },
+        async openDocViewer(file) {
+            if (!file) return;
+            const ext = file.filename.split('.').pop().toLowerCase();
+            const mdExts = ['md', 'markdown', 'mdx'];
+            const isMarkdown = mdExts.includes(ext);
+            
+            this.docViewer = { show: true, file, loading: true, content: '', type: isMarkdown ? 'markdown' : 'text', error: '' };
+            
+            try {
+                const token = this.shareToken || this.token || '';
+                let downloadUrl;
+                if (token) {
+                    if (file && file.id) {
+                        downloadUrl = `/s/${token}/file/${file.id}/stream`;
+                    } else {
+                        downloadUrl = `/s/${token}/stream`;
+                    }
+                } else {
+                    downloadUrl = `/download/${file.id}`;
+                }
+                const resp = await fetch(downloadUrl, { credentials: 'same-origin' });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                let text = await resp.text();
+                
+                if (isMarkdown) {
+                    await Promise.all([TeleCloud.ensureMarkedLoaded(), TeleCloud.ensurePurifyLoaded()]);
+                    const rawHtml = window.marked.parse(text);
+                    this.docViewer.content = window.DOMPurify.sanitize(rawHtml, { USE_PROFILES: { html: true } });
+                } else if (ext === 'csv') {
+                    this.docViewer.type = 'csv';
+                    const parseCSV = (raw) => {
+                        const rows = []; let row = []; let cell = ''; let inQuotes = false;
+                        for (let i = 0; i < raw.length; i++) {
+                            const ch = raw[i], next = raw[i+1];
+                            if (inQuotes) { if (ch === '"' && next === '"') { cell += '"'; i++; } else if (ch === '"') { inQuotes = false; } else { cell += ch; } }
+                            else { if (ch === '"') { inQuotes = true; } else if (ch === ',') { row.push(cell); cell = ''; } else if (ch === '\n' || (ch === '\r' && next === '\n')) { row.push(cell); cell = ''; if (row.some(c => c !== '')) rows.push(row); row = []; if (ch === '\r') i++; } else { cell += ch; } }
+                        }
+                        row.push(cell); if (row.some(c => c !== '')) rows.push(row);
+                        return rows;
+                    };
+                    const rows = parseCSV(text);
+                    if (rows.length === 0) { this.docViewer.content = '<p class="text-slate-400 italic">Empty file</p>'; }
+                    else {
+                        const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                        const header = rows[0];
+                        let html = '<div class="overflow-x-auto"><table class="w-full text-sm border-collapse">';
+                        html += '<thead><tr>' + header.map(h => `<th class="px-3 py-2 text-left font-bold bg-slate-100 dark:bg-slate-800 border-b-2 border-slate-300 dark:border-slate-600 sticky top-0">${esc(h)}</th>`).join('') + '</tr></thead>';
+                        html += '<tbody>';
+                        for (let r = 1; r < rows.length; r++) {
+                            const cls = r % 2 === 0 ? 'bg-slate-50 dark:bg-slate-800/50' : '';
+                            html += '<tr class="' + cls + '">' + rows[r].map(c => `<td class="px-3 py-1.5 border-b border-slate-200 dark:border-slate-700">${esc(c)}</td>`).join('') + '</tr>';
+                        }
+                        html += '</tbody></table></div>';
+                        html += `<p class="text-xs text-slate-400 mt-3">${rows.length - 1} rows × ${header.length} columns</p>`;
+                        this.docViewer.content = html;
+                    }
+                } else {
+                    await ensurePrismLoaded();
+                    const langMap = {
+                        'js': 'javascript', 'ts': 'typescript', 'py': 'python', 'rb': 'ruby',
+                        'sh': 'bash', 'bash': 'bash', 'zsh': 'bash', 'yml': 'yaml', 'yaml': 'yaml',
+                        'json': 'json', 'xml': 'xml', 'html': 'html', 'htm': 'html', 'css': 'css',
+                        'go': 'go', 'rs': 'rust', 'java': 'java', 'c': 'c', 'cpp': 'cpp', 'h': 'c',
+                        'cs': 'csharp', 'php': 'php', 'sql': 'sql', 'swift': 'swift', 'kt': 'kotlin',
+                        'ini': 'ini', 'toml': 'ini', 'conf': 'ini', 'cfg': 'ini', 'log': 'log',
+                        'csv': 'csv', 'txt': 'plaintext', 'env': 'plaintext', 'dockerfile': 'docker',
+                        'makefile': 'makefile', 'r': 'r', 'lua': 'lua', 'vim': 'vim', 'graphql': 'graphql',
+                        'proto': 'protobuf', 'tf': 'hcl', 'nix': 'nix',
+                    };
+                    const lang = langMap[ext] || 'plaintext';
+                    const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                    const highlighted = (window.Prism && window.Prism.languages[lang])
+                        ? window.Prism.highlight(escaped, window.Prism.languages[lang], lang)
+                        : escaped;
+                    this.docViewer.content = highlighted;
+                }
+            } catch (e) {
+                console.error('Doc viewer error:', e);
+                this.docViewer.error = e.message || 'Failed to load file';
+                this.docViewer.content = '';
+            } finally {
+                this.docViewer.loading = false;
+            }
+        },
+        closeDocViewer() {
+            if (window.VueOffice) window.VueOffice.destroy();
+            this.docViewer = { show: false, file: null, loading: false, content: '', type: 'text', error: '' };
+        },
+        async openOfficeViewer(file) {
+            if (!file) return;
+            const ext = file.filename.split('.').pop().toLowerCase();
+            const supported = ['docx', 'xlsx', 'xls', 'pptx'];
+            if (!supported.includes(ext)) {
+                window.open(`/download/${file.id}`, '_blank');
+                return;
+            }
+            this.docViewer = { show: true, file, loading: true, content: '', type: 'office', error: '' };
+            try {
+                await TeleCloud.ensureOfficeLoaded();
+                const token = this.token || '';
+                let downloadUrl;
+                if (token) {
+                    downloadUrl = file && file.id ? `/s/${token}/file/${file.id}/stream` : `/s/${token}/stream`;
+                } else {
+                    downloadUrl = `/download/${file.id}`;
+                }
+                const resp = await fetch(downloadUrl, { credentials: 'same-origin' });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const arrayBuffer = await resp.arrayBuffer();
+                await this.$nextTick();
+                const container = document.getElementById('office-viewer-container');
+                if (!container) throw new Error('Viewer container not found');
+                window.VueOffice.render(container, ext, arrayBuffer);
+                this.docViewer.loading = false;
+            } catch (e) {
+                console.error('Office viewer error:', e);
+                this.docViewer.loading = false;
+                this.docViewer.error = e.message || 'Failed to render document';
+            }
+        },
         openPdfViewer(file, isShare = false, shareToken = '') {
             this.pdfViewer.show = true;
             this.pdfViewer.file = file;
@@ -10065,7 +10422,7 @@ function shareFileApp() {
                 const imgExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'heic', 'heif'];
                 const videoExts = ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'ogv', '3gp', 'flv', 'wmv'];
                 const audioExts = ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'opus', 'oga', 'aac', 'm4b'];
-                const textExts = ['txt', 'md', 'log', 'json', 'js', 'py', 'go', 'html', 'css', 'yml', 'yaml', 'sql', 'sh', 'conf', 'ini', 'c', 'cpp', 'h', 'hpp', 'cs', 'java', 'rb', 'rs', 'swift'];
+                const textExts = ['txt', 'md', 'log', 'json', 'js', 'py', 'go', 'html', 'css', 'yml', 'yaml', 'sql', 'sh', 'conf', 'ini', 'c', 'cpp', 'h', 'hpp', 'cs', 'java', 'rb', 'rs', 'swift', 'csv'];
                 const isComicOrEpubOrPdf = (result.n === 'type_comic' || result.n === 'type_epub' || result.n === 'type_pdf');
                 this.tooLarge = (imgExts.includes(ext) && rawSize > 50 * 1024 * 1024) || 
                                 (isComicOrEpubOrPdf && rawSize > 150 * 1024 * 1024) || 

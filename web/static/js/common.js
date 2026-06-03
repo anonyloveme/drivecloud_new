@@ -157,9 +157,9 @@ const TeleCloud = window.TeleCloud = {
             'epub': { n: 'type_epub', c: 'bg-emerald-100 text-emerald-500 dark:bg-emerald-500/20 dark:text-emerald-400', i: '<i class="fa-solid fa-book text-2xl"></i>' },
             'pdf': { n: 'type_pdf', c: 'bg-red-100 text-red-500 dark:bg-red-500/20 dark:text-red-400', i: '<i class="fa-solid fa-file-pdf text-2xl"></i>' },
             'doc': { n: 'type_doc', c: 'bg-red-100 text-red-500 dark:bg-red-500/20 dark:text-red-400', i: '<i class="fa-solid fa-file-pdf text-2xl"></i>' },
-            'docx': 'doc', 'xls': 'doc', 'xlsx': 'doc', 'ppt': 'doc', 'pptx': 'doc', 'csv': 'doc',
+            'docx': 'doc', 'xls': 'doc', 'xlsx': 'doc', 'ppt': 'doc', 'pptx': 'doc',
             'txt': { n: 'type_text', c: 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400', i: '<i class="fa-solid fa-file-lines text-2xl"></i>' },
-            'md': 'txt', 'log': 'txt', 'go': 'txt', 'yml': 'txt', 'yaml': 'txt', 'sh': 'txt', 'conf': 'txt', 'ini': 'txt'
+            'md': 'txt', 'log': 'txt', 'go': 'txt', 'yml': 'txt', 'yaml': 'txt', 'sh': 'txt', 'conf': 'txt', 'ini': 'txt', 'csv': 'txt'
         };
         let result = types[ext];
         if (typeof result === 'string') result = types[result];
@@ -321,6 +321,49 @@ const TeleCloud = window.TeleCloud = {
 
     getShareMediaHtml(file, shareToken) {
         return this.getMediaHtml(file, { shareToken, isShare: true, lightboxAttr: false });
+    },
+
+    async ensureMarkedLoaded() {
+        if (window.marked) return;
+        return new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = `/static/js/marked.min.js?v=${window.TELECLOUD_VERSION || 'dev'}`;
+            script.onload = () => {
+                if (window.marked && window.marked.setOptions) {
+                    window.marked.setOptions({ breaks: true, gfm: true });
+                }
+                resolve();
+            };
+            script.onerror = () => reject(new Error('Failed to load marked.js'));
+            document.head.appendChild(script);
+        });
+    },
+
+    async ensurePurifyLoaded() {
+        if (window.DOMPurify) return;
+        return new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = `/static/js/purify.min.js?v=${window.TELECLOUD_VERSION || 'dev'}`;
+            script.onload = () => resolve();
+            script.onerror = () => reject(new Error('Failed to load DOMPurify'));
+            document.head.appendChild(script);
+        });
+    },
+
+    async ensureOfficeLoaded() {
+        if (window.VueOffice) return;
+        return new Promise((resolve, reject) => {
+            const v = window.TELECLOUD_VERSION || 'dev';
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = `/static/js/vue-office.min.css?v=${v}`;
+            document.head.appendChild(link);
+            const script = document.createElement('script');
+            script.src = `/static/js/vue-office.min.js?v=${v}`;
+            script.onload = () => resolve();
+            script.onerror = () => reject(new Error('Failed to load Vue Office'));
+            document.head.appendChild(script);
+        });
     }
 };
 

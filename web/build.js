@@ -9,6 +9,8 @@ const https = require('https');
 const STATIC_DOWNLOADS = [
   { url: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',        out: 'static/js/pdf.min.js' },
   { url: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js', out: 'static/js/pdf.worker.min.js' },
+  { url: 'https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.0/marked.min.js', out: 'static/js/marked.min.js' },
+  { url: 'https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js', out: 'static/js/purify.min.js' },
 ];
 
 function download(url, dest) {
@@ -170,6 +172,22 @@ async function main() {
         logLevel: 'silent',
       }))
     ),
+    // Vue-office viewer bundle
+    wrap('static/js/vue-office.min.js', () => esbuild.build({
+      entryPoints: ['static/js/vue-office-entry.js'],
+      outfile: 'static/js/vue-office.min.js',
+      minify: true,
+      bundle: true,
+      format: 'iife',
+      globalName: 'VueOfficeInit',
+      define: {
+        '__VUE_OPTIONS_API__': 'true',
+        '__VUE_PROD_DEVTOOLS__': 'false',
+        '__VUE_PROD_HYDRATION_MISMATCH_DETAILS__': 'false',
+        'process.env.NODE_ENV': '"production"',
+      },
+      logLevel: 'silent',
+    })),
     // Script splitting build step
     wrap('static/js/script.min.js', () => esbuild.build({
       entryPoints: ['static/js/script.js'],
