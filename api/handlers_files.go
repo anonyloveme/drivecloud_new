@@ -462,7 +462,7 @@ func (h *Handler) handlePostRemoteUpload(c *gin.Context) {
 
 	if dbPath != "/" {
 		var folder database.File
-		err = database.RODB.Get(&folder, "SELECT is_folder FROM files WHERE path = ? AND filename = ? AND is_folder = 1 AND owner = ?", filepath.Dir(dbPath), filepath.Base(dbPath), username)
+		err = database.RODB.Get(&folder, "SELECT is_folder FROM files WHERE path = ? AND filename = ? AND is_folder = 1 AND owner = ? AND deleted_at IS NULL", filepath.Dir(dbPath), filepath.Base(dbPath), username)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "folder_not_found"})
 			return
@@ -1570,7 +1570,7 @@ func (h *Handler) publicShareItem(origin string, fileID int64, shareMode, dbPath
 			}
 			parentPath := filepath.Dir(dbPath)
 			parentName := filepath.Base(dbPath)
-			err := database.RODB.Get(&parent, "SELECT id FROM files WHERE path = ? AND filename = ? AND is_folder = 1 AND owner = ?", parentPath, parentName, username)
+			err := database.RODB.Get(&parent, "SELECT id FROM files WHERE path = ? AND filename = ? AND is_folder = 1 AND owner = ? AND deleted_at IS NULL", parentPath, parentName, username)
 			if err == nil {
 				targetID = parent.ID
 			} else {

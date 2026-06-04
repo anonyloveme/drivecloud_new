@@ -1121,7 +1121,7 @@ func EnsureFoldersExist(dbPath string, owner string) error {
 		}
 
 		var id int
-		err := RODB.Get(&id, "SELECT id FROM files WHERE path = ? AND filename = ? AND is_folder = 1 AND owner = ?", currentPath, part, owner)
+		err := RODB.Get(&id, "SELECT id FROM files WHERE path = ? AND filename = ? AND is_folder = 1 AND owner = ? AND deleted_at IS NULL", currentPath, part, owner)
 		if err != nil {
 			var count int
 			if currentPath == "/" {
