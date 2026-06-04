@@ -7,10 +7,11 @@ package database
 // Adding a key here will cause new writes to be encrypted. Existing rows
 // are migrated on boot by MigrateEncryptV1.
 var sensitiveKeys = map[string]struct{}{
-	"api_id":       {},
-	"api_hash":     {},
-	"log_group_id": {},
-	"bot_tokens":   {},
+	"api_id":         {},
+	"api_hash":       {},
+	"log_group_id":   {},
+	"bot_tokens":     {},
+	"gdrive_api_key": {},
 }
 
 // IsSensitiveSetting reports whether a settings key is auto-encrypted.

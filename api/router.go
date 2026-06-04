@@ -206,6 +206,11 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS, startTG func(cfg *config.C
 		api.POST("/torrent/add", h.handlePostTorrentAdd)
 		api.POST("/torrent/upload", h.handlePostTorrentUpload)
 
+		// Google Drive Import
+		api.GET("/gdrive/status", h.handleGetGDriveStatus)
+		api.POST("/gdrive/import", h.handlePostGDriveImport)
+		api.POST("/gdrive/api-key", h.handlePostGDriveAPIKey)
+
 		// WebSocket
 		api.GET("/ws", h.handleWebSocket)
 	}

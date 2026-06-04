@@ -31,7 +31,7 @@ import (
 var (
 	UploadTasks = make(map[string]*UploadStatus)
 	TaskCancels = make(map[string]context.CancelFunc)
-	taskMutex   sync.Mutex
+	TaskMutex   sync.Mutex
 
 	// Limit concurrent uploads to Telegram to prevent floodwait
 	uploadSemaphore         chan struct{}
@@ -195,8 +195,8 @@ func UpdateTaskWithSpeed(taskID string, status string, percent int, msg string, 
 }
 
 func UpdateTaskWithFileID(taskID string, status string, percent int, msg string, fileID int64, filename string, owner string) {
-	taskMutex.Lock()
-	defer taskMutex.Unlock()
+	TaskMutex.Lock()
+	defer TaskMutex.Unlock()
 	if existing, ok := UploadTasks[taskID]; ok {
 		existing.Status = status
 		existing.Percent = percent
@@ -233,8 +233,8 @@ func UpdateTaskWithFileID(taskID string, status string, percent int, msg string,
 
 // Keep this for compatibility but update internally
 func UpdateTaskWithFile(taskID string, status string, percent int, msg string, filename string, owner string, size int64, uploaded int64, manualSpeed ...int64) {
-	taskMutex.Lock()
-	defer taskMutex.Unlock()
+	TaskMutex.Lock()
+	defer TaskMutex.Unlock()
 
 	var finalSpeed int64
 	if len(manualSpeed) > 0 {
@@ -391,8 +391,8 @@ func UpdateTaskWithFile(taskID string, status string, percent int, msg string, f
 }
 
 func GetTask(taskID string) *UploadStatus {
-	taskMutex.Lock()
-	defer taskMutex.Unlock()
+	TaskMutex.Lock()
+	defer TaskMutex.Unlock()
 	if t, ok := UploadTasks[taskID]; ok {
 		return t
 	}
@@ -400,12 +400,12 @@ func GetTask(taskID string) *UploadStatus {
 }
 
 func CancelTask(taskID string, username string) bool {
-	taskMutex.Lock()
+	TaskMutex.Lock()
 
 	// Verify owner from memory
 	status, ok := UploadTasks[taskID]
 	if ok && status.Owner != username {
-		taskMutex.Unlock()
+		TaskMutex.Unlock()
 		return false
 	}
 
@@ -414,7 +414,7 @@ func CancelTask(taskID string, username string) bool {
 		var dbOwner string
 		err := database.RODB.Get(&dbOwner, "SELECT owner FROM upload_tasks WHERE id = ?", taskID)
 		if err == nil && dbOwner != username {
-			taskMutex.Unlock()
+			TaskMutex.Unlock()
 			return false
 		}
 	}
@@ -423,7 +423,7 @@ func CancelTask(taskID string, username string) bool {
 		cancel()
 		delete(TaskCancels, taskID)
 	}
-	taskMutex.Unlock()
+	TaskMutex.Unlock()
 
 	// Call UpdateTask in a separate goroutine to avoid deadlock
 	go UpdateTask(taskID, "cancelled", 0, "", username)
@@ -507,9 +507,9 @@ func adaptiveThreads(partSize int64, cfg *config.Config) int {
 // scheduleTaskCleanup removes a terminal task from the in-memory map after 1 hour.
 func scheduleTaskCleanup(taskID string) {
 	time.AfterFunc(1*time.Hour, func() {
-		taskMutex.Lock()
+		TaskMutex.Lock()
 		delete(UploadTasks, taskID)
-		taskMutex.Unlock()
+		TaskMutex.Unlock()
 	})
 }
 
@@ -655,14 +655,14 @@ func (m *maxSizeReader) Read(p []byte) (n int, err error) {
 
 func ProcessCompleteUpload(ctx context.Context, filePath, filename, path, mimeType, taskID string, cfg *config.Config, overwrite bool, owner string) {
 	ctx, cancel := context.WithCancel(ctx)
-	taskMutex.Lock()
+	TaskMutex.Lock()
 	TaskCancels[taskID] = cancel
-	taskMutex.Unlock()
+	TaskMutex.Unlock()
 
 	defer func() {
-		taskMutex.Lock()
+		TaskMutex.Lock()
 		delete(TaskCancels, taskID)
-		taskMutex.Unlock()
+		TaskMutex.Unlock()
 		cancel()
 	}()
 
@@ -846,14 +846,14 @@ func ProcessRemoteUpload(ctx context.Context, url, path, taskID string, cfg *con
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
-	taskMutex.Lock()
+	TaskMutex.Lock()
 	TaskCancels[taskID] = cancel
-	taskMutex.Unlock()
+	TaskMutex.Unlock()
 
 	defer func() {
-		taskMutex.Lock()
+		TaskMutex.Lock()
 		delete(TaskCancels, taskID)
-		taskMutex.Unlock()
+		TaskMutex.Unlock()
 		cancel()
 	}()
 
@@ -1256,13 +1256,13 @@ func ProcessCompleteUploadSync(ctx context.Context, filePath, filename, path, mi
 	if taskID != "" {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithCancel(ctx)
-		taskMutex.Lock()
+		TaskMutex.Lock()
 		TaskCancels[taskID] = cancel
-		taskMutex.Unlock()
+		TaskMutex.Unlock()
 		defer func() {
-			taskMutex.Lock()
+			TaskMutex.Lock()
 			delete(TaskCancels, taskID)
-			taskMutex.Unlock()
+			TaskMutex.Unlock()
 			cancel()
 		}()
 	}
@@ -1496,8 +1496,8 @@ func DeleteMessages(ctx context.Context, cfg *config.Config, msgIDs []int) error
 	return nil
 }
 func GetActiveTasks(username string) map[string]*UploadStatus {
-	taskMutex.Lock()
-	defer taskMutex.Unlock()
+	TaskMutex.Lock()
+	defer TaskMutex.Unlock()
 
 	tasks := make(map[string]*UploadStatus)
 	for id, status := range UploadTasks {
@@ -1569,13 +1569,13 @@ func ProcessRemoteUploadSync(ctx context.Context, url, path, taskID string, cfg 
 	if taskID != "" {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithCancel(ctx)
-		taskMutex.Lock()
+		TaskMutex.Lock()
 		TaskCancels[taskID] = cancel
-		taskMutex.Unlock()
+		TaskMutex.Unlock()
 		defer func() {
-			taskMutex.Lock()
+			TaskMutex.Lock()
 			delete(TaskCancels, taskID)
-			taskMutex.Unlock()
+			TaskMutex.Unlock()
 			cancel()
 		}()
 	}

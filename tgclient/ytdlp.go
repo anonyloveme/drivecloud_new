@@ -205,13 +205,13 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 	defer cancel()
 
 	// Register for cancellation
-	taskMutex.Lock()
+	TaskMutex.Lock()
 	TaskCancels[taskID] = cancel
-	taskMutex.Unlock()
+	TaskMutex.Unlock()
 	defer func() {
-		taskMutex.Lock()
+		TaskMutex.Lock()
 		delete(TaskCancels, taskID)
-		taskMutex.Unlock()
+		TaskMutex.Unlock()
 	}()
 
 	UpdateTaskWithFile(taskID, "waiting_slot", 0, "waiting_slot", "", owner, 0, 0)

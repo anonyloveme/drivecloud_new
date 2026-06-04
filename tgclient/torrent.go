@@ -47,13 +47,13 @@ func ProcessTorrentUpload(ctx context.Context, input, path, taskID string, cfg *
 	defer cancel()
 
 	// Register for cancellation immediately so user can cancel while in queue
-	taskMutex.Lock()
+	TaskMutex.Lock()
 	TaskCancels[taskID] = cancel
-	taskMutex.Unlock()
+	TaskMutex.Unlock()
 	defer func() {
-		taskMutex.Lock()
+		TaskMutex.Lock()
 		delete(TaskCancels, taskID)
-		taskMutex.Unlock()
+		TaskMutex.Unlock()
 	}()
 
 	UpdateTask(taskID, "waiting_slot", 0, "waiting_slot", owner)

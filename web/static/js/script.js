@@ -1420,6 +1420,11 @@ function cloudApp(initialIsLoggedIn, isAdmin = true, storageUsed = 0, webdavEnab
         comicViewer: { show: false, file: null, pages: [], pageUrls: [], currentPageIndex: 0, loading: false, fitMode: 'height', pageLoading: false, scrollMode: 'page', autoScrollActive: false, autoScrollSpeed: 2, settingsOpen: false, direction: 'ltr', viewMode: 'single', filter: 'none', zoomActive: false, touchStartX: 0, touchStartY: 0 },
         epubViewer: { show: false, file: null, loading: false, sidebarOpen: false, toc: [], fontSize: 100, pageProgress: 0, scrollMode: 'scrolled', autoScrollActive: false, autoScrollSpeed: 2, settingsOpen: false, spine: [], resourceBaseUrl: '', currentChapter: 0, title: '', theme: 'system', fontFamily: 'sans-serif' },
         pdfViewer: { show: false, file: null, loading: false, sidebarOpen: false, toc: [], zoom: 100, pageProgress: 0, settingsOpen: false, currentPage: 1, numPages: 0, darkModeFilter: false, pageLoading: false, autoScrollActive: false, autoScrollSpeed: 2, scrollMode: 'page' },
+        gdriveModal: false,
+        gdriveUrl: '',
+        gdrivePath: '',
+        gdriveStatus: { configured: false },
+        gdriveApiKey: '',
         docViewer: { show: false, file: null, loading: false, content: '', type: 'text', error: '', pages: 0, currentPage: 0, officeHandle: null, ext: '' },
         fileInfoModal: { show: false, file: null, typeName: '', ext: '', svgIcon: '', bgColor: '', isMedia: false, mediaHtml: '', isLarge: false, isPreviewLoading: false, needsLoad: false, tooLarge: false, bypassWarning: false, unsupportedMedia: false },
         mediaPlayerModal: { show: false, file: null, isAudio: false, isPlaying: false, minimized: false, x: null, y: null, playlist: [], playlistIndex: -1, playlistOpen: false },
@@ -2017,6 +2022,32 @@ function cloudApp(initialIsLoggedIn, isAdmin = true, storageUsed = 0, webdavEnab
         },
 
         async logout() { await fetch('/logout', { method: 'POST', headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } }); window.location.href = '/login'; },
+        async fetchGDriveStatus() {
+            try { const res = await fetch('/api/gdrive/status', { credentials: 'same-origin' }); if (res.ok) this.gdriveStatus = await res.json(); } catch (e) { console.error('GDrive status error:', e); }
+        },
+        async saveGDriveAPIKey() {
+            try {
+                const fd = new FormData();
+                fd.append('api_key', this.gdriveApiKey);
+                const res = await fetch('/api/gdrive/api-key', { method: 'POST', body: fd, headers: { 'X-CSRF-Token': TeleCloud.getCsrfToken() } });
+                if (res.ok) {
+                    const data = await res.json();
+                    this.gdriveStatus.configured = data.configured;
+                    this.showToast(this.t('toast_settings_saved'), 'success');
+                } else {
+                    this.showToast(this.t('status_error'), 'error');
+                }
+            } catch (e) { this.showToast(this.t('status_error'), 'error'); }
+        },
+        async submitGDriveImport() {
+            if (!this.gdriveUrl.trim()) return;
+            try {
+                const res = await fetch('/api/gdrive/import', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': TeleCloud.getCsrfToken() }, credentials: 'same-origin', body: JSON.stringify({ folder_url: this.gdriveUrl, path: this.gdrivePath || '/' }) });
+                const data = await res.json();
+                if (res.ok && data.task_id) { this.gdriveModal = false; this.gdriveUrl = ''; this.showToast(this.t('gdrive_import_started'), 'success'); }
+                else { this.showToast(this.t(data.error || 'gdrive_import_failed'), 'error'); }
+            } catch (e) { this.showToast(this.t('gdrive_import_failed'), 'error'); }
+        },
         getBreadcrumbs() { return this.currentPath === '/' ? [] : this.currentPath.split('/').filter(Boolean); },
         navigateToFolder(folderName) { if (this.isLoading || this.isRefreshing) return; this.currentPath = this.currentPath === '/' ? '/' + folderName : this.currentPath + '/' + folderName; this.fetchFiles(); },
         navigateToIndex(index) { if (this.isLoading || this.isRefreshing) return; this.currentPath = '/' + this.getBreadcrumbs().slice(0, index + 1).join('/'); this.fetchFiles(); },
