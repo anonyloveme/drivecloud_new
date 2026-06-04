@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -140,30 +141,42 @@ func (h *Handler) processGDriveImport(taskID, folderID, dbPath, apiKey, owner st
 		rootName = "gdrive_import"
 	}
 
-	// BUG1 FIX: Pass root folder name as initial parentPath so the tree mirrors Drive
-	files, skipped, err := listDriveFilesRecursive(ctx, apiKey, folderID, rootName, 0)
+	// Pass root folder name as initial parentPath so the tree mirrors Drive
+	files, folders, skipped, err := listDriveFilesRecursive(ctx, apiKey, folderID, rootName, 0)
 	if err != nil {
 		tgclient.UpdateTask(taskID, "error", 0, "gdrive_list_failed: "+truncate(err.Error(), 200), owner)
 		return
 	}
 
 	total := len(files)
-	if total == 0 && len(skipped) == 0 {
+	if total == 0 && len(skipped) == 0 && len(folders) == 0 {
 		tgclient.UpdateTask(taskID, "done", 100, "gdrive_empty", owner)
 		return
 	}
 
-	// BUG1 FIX: Pre-create all intermediate folders so the tree mirrors Drive
-	createdFolders := make(map[string]bool)
-	for _, f := range files {
-		if f.RelativePath == "" {
-			continue
+	// Build the FULL folder tree from collected folder relative paths (includes empty folders).
+	// Sort by depth so parents are created before children.
+	sortFoldersByDepth(folders)
+	for _, folderRelPath := range folders {
+		folderAbsPath := path.Clean(dbPath + "/" + folderRelPath)
+		log.Printf("[GDrive] Creating folder: %s (rel=%s)", folderAbsPath, folderRelPath)
+		database.EnsureFoldersExist(folderAbsPath, owner)
+	}
+
+	// Also create the root folder itself (its name is rootName, already in every RelativePath)
+	rootAbsPath := path.Clean(dbPath + "/" + rootName)
+	database.EnsureFoldersExist(rootAbsPath, owner)
+
+	// Debug: log target paths for first few files to verify no root duplication
+	for i, f := range files {
+		if i >= 3 {
+			break
 		}
-		folderPath := path.Clean(dbPath + "/" + f.RelativePath)
-		if !createdFolders[folderPath] {
-			database.EnsureFoldersExist(folderPath, owner)
-			createdFolders[folderPath] = true
+		targetPath := dbPath
+		if f.RelativePath != "" {
+			targetPath = path.Clean(dbPath + "/" + f.RelativePath)
 		}
+		log.Printf("[GDrive] File target: %s/%s (rel=%s, dbPath=%s)", targetPath, f.Name, f.RelativePath, dbPath)
 	}
 
 	// BUG2 FIX: Worker pool with bounded concurrency
@@ -377,19 +390,20 @@ func getDriveFileName(ctx context.Context, apiKey, fileID string) string {
 	return out.Name
 }
 
-func listDriveFilesRecursive(ctx context.Context, apiKey, folderID, parentPath string, depth int) ([]gdriveFile, []string, error) {
+func listDriveFilesRecursive(ctx context.Context, apiKey, folderID, parentPath string, depth int) ([]gdriveFile, []string, []string, error) {
 	if depth > maxGDriveDepth {
-		return nil, nil, fmt.Errorf("max recursion depth %d exceeded", maxGDriveDepth)
+		return nil, nil, nil, fmt.Errorf("max recursion depth %d exceeded", maxGDriveDepth)
 	}
 
 	var files []gdriveFile
+	var folders []string
 	var skipped []string
 	pageToken := ""
 
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, nil, ctx.Err()
+			return nil, nil, nil, ctx.Err()
 		default:
 		}
 
@@ -402,13 +416,13 @@ func listDriveFilesRecursive(ctx context.Context, apiKey, folderID, parentPath s
 
 		req, err := http.NewRequestWithContext(ctx, "GET", listURL, nil)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 
 		client := &http.Client{Timeout: 30 * time.Second}
 		resp, err := client.Do(req)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 
 		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
@@ -418,20 +432,20 @@ func listDriveFilesRecursive(ctx context.Context, apiKey, folderID, parentPath s
 		}
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
-			return nil, nil, fmt.Errorf("drive list HTTP %d", resp.StatusCode)
+			return nil, nil, nil, fmt.Errorf("drive list HTTP %d", resp.StatusCode)
 		}
 
 		var listResp gdriveListResp
 		if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
 			resp.Body.Close()
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		resp.Body.Close()
 
 		for _, item := range listResp.Files {
 			if len(files)+len(skipped) >= maxGDriveFiles {
 				skipped = append(skipped, "MAX_FILES_REACHED")
-				return files, skipped, nil
+				return files, folders, skipped, nil
 			}
 
 			if strings.HasPrefix(item.MimeType, googleNativeMime) {
@@ -446,12 +460,15 @@ func listDriveFilesRecursive(ctx context.Context, apiKey, folderID, parentPath s
 				} else {
 					subPath = subPath + "/" + item.Name
 				}
-				subFiles, subSkipped, err := listDriveFilesRecursive(ctx, apiKey, item.ID, subPath, depth+1)
+				// FIX: Record every folder encountered (including empty ones) BEFORE recursing
+				folders = append(folders, subPath)
+				subFiles, subFolders, subSkipped, err := listDriveFilesRecursive(ctx, apiKey, item.ID, subPath, depth+1)
 				if err != nil {
 					skipped = append(skipped, item.Name+"/ (error: "+err.Error()+")")
 					continue
 				}
 				files = append(files, subFiles...)
+				folders = append(folders, subFolders...)
 				skipped = append(skipped, subSkipped...)
 			} else {
 				size := int64(0)
@@ -472,7 +489,20 @@ func listDriveFilesRecursive(ctx context.Context, apiKey, folderID, parentPath s
 		}
 	}
 
-	return files, skipped, nil
+	return files, folders, skipped, nil
+}
+
+// sortFoldersByDepth sorts folder relative paths by depth (fewest "/" first)
+// so parent folders are created before children.
+func sortFoldersByDepth(folders []string) {
+	sort.Slice(folders, func(i, j int) bool {
+		depthI := strings.Count(folders[i], "/")
+		depthJ := strings.Count(folders[j], "/")
+		if depthI != depthJ {
+			return depthI < depthJ
+		}
+		return folders[i] < folders[j]
+	})
 }
 
 func encodeQuery(q string) string {
