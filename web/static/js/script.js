@@ -1420,7 +1420,7 @@ function cloudApp(initialIsLoggedIn, isAdmin = true, storageUsed = 0, webdavEnab
         comicViewer: { show: false, file: null, pages: [], pageUrls: [], currentPageIndex: 0, loading: false, fitMode: 'height', pageLoading: false, scrollMode: 'page', autoScrollActive: false, autoScrollSpeed: 2, settingsOpen: false, direction: 'ltr', viewMode: 'single', filter: 'none', zoomActive: false, touchStartX: 0, touchStartY: 0 },
         epubViewer: { show: false, file: null, loading: false, sidebarOpen: false, toc: [], fontSize: 100, pageProgress: 0, scrollMode: 'scrolled', autoScrollActive: false, autoScrollSpeed: 2, settingsOpen: false, spine: [], resourceBaseUrl: '', currentChapter: 0, title: '', theme: 'system', fontFamily: 'sans-serif' },
         pdfViewer: { show: false, file: null, loading: false, sidebarOpen: false, toc: [], zoom: 100, pageProgress: 0, settingsOpen: false, currentPage: 1, numPages: 0, darkModeFilter: false, pageLoading: false, autoScrollActive: false, autoScrollSpeed: 2, scrollMode: 'page' },
-        docViewer: { show: false, file: null, loading: false, content: '', type: 'text', error: '', pages: 0, currentPage: 0, officeHandle: null },
+        docViewer: { show: false, file: null, loading: false, content: '', type: 'text', error: '', pages: 0, currentPage: 0, officeHandle: null, ext: '' },
         fileInfoModal: { show: false, file: null, typeName: '', ext: '', svgIcon: '', bgColor: '', isMedia: false, mediaHtml: '', isLarge: false, isPreviewLoading: false, needsLoad: false, tooLarge: false, bypassWarning: false, unsupportedMedia: false },
         mediaPlayerModal: { show: false, file: null, isAudio: false, isPlaying: false, minimized: false, x: null, y: null, playlist: [], playlistIndex: -1, playlistOpen: false },
         modal: { show: false, type: 'alert', title: '', message: '', input: '', resolve: null, isDanger: false, inputType: 'text', applyToAll: false },
@@ -4740,7 +4740,8 @@ function cloudApp(initialIsLoggedIn, isAdmin = true, storageUsed = 0, webdavEnab
         },
         closeDocViewer() {
             if (window.VueOffice) window.VueOffice.destroy();
-            this.docViewer = { show: false, file: null, loading: false, content: '', type: 'text', error: '' };
+            document.removeEventListener('keydown', this._officeKeyHandler);
+            this.docViewer = { show: false, file: null, loading: false, content: '', type: 'text', error: '', pages: 0, currentPage: 0, officeHandle: null, ext: '' };
         },
         async openOfficeViewer(file) {
             if (!file) return;
@@ -4750,47 +4751,57 @@ function cloudApp(initialIsLoggedIn, isAdmin = true, storageUsed = 0, webdavEnab
                 window.open(`/download/${file.id}`, '_blank');
                 return;
             }
-            this.docViewer = { show: true, file, loading: true, content: '', type: 'office', error: '', pages: 0, currentPage: 0, officeHandle: null };
+            this.docViewer = { show: true, file, loading: true, content: '', type: 'office', error: '', pages: 0, currentPage: 0, officeHandle: null, ext };
             try {
                 await TeleCloud.ensureOfficeLoaded();
-                const downloadUrl = `/download/${file.id}`;
-                const resp = await fetch(downloadUrl, { credentials: 'same-origin' });
+                const resp = await fetch(`/download/${file.id}`, { credentials: 'same-origin' });
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const arrayBuffer = await resp.arrayBuffer();
                 this.docViewer.loading = false;
                 await this.$nextTick();
-                await new Promise(r => setTimeout(r, 50));
+                await new Promise(r => setTimeout(r, 80));
                 const container = document.getElementById('office-viewer-container');
                 if (!container) throw new Error('Viewer container not found');
                 const self = this;
                 const handle = window.VueOffice.render(container, ext, arrayBuffer, {
                     onRendered({ pages, type }) {
                         self.docViewer.pages = pages;
-                        self.docViewer.currentPage = type === 'pptx' ? 1 : 0;
+                        self.docViewer.currentPage = (type === 'pptx' || type === 'docx') && pages > 0 ? 1 : 0;
                     },
-                    onError(err) {
-                        self.docViewer.error = err?.message || 'render_failed';
-                    }
+                    onPageChange(page) { self.docViewer.currentPage = page; },
+                    onError(err) { self.docViewer.error = err?.message || 'render_failed'; }
                 });
                 this.docViewer.officeHandle = handle;
+                this._officeKeyHandler = (e) => {
+                    if (!self.docViewer.show) return;
+                    if (e.key === 'Escape') { e.preventDefault(); self.closeDocViewer(); return; }
+                    if (self.docViewer.ext === 'xlsx' || self.docViewer.ext === 'xls') return;
+                    if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); self.officeNext(); }
+                    if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); self.officePrev(); }
+                };
+                document.addEventListener('keydown', this._officeKeyHandler);
             } catch (e) {
                 console.error('Office viewer error:', e);
                 this.docViewer.loading = false;
                 this.docViewer.error = e.message || 'Failed to render document';
             }
         },
-        officeNextSlide() {
-            if (this.docViewer.officeHandle && this.docViewer.currentPage < this.docViewer.pages) {
-                const next = this.docViewer.currentPage;
-                this.docViewer.officeHandle.goToSlide(next);
-                this.docViewer.currentPage = next + 1;
+        officeNext() {
+            if (!this.docViewer.officeHandle || this.docViewer.currentPage >= this.docViewer.pages) return;
+            if (this.docViewer.ext === 'pptx') {
+                this.docViewer.officeHandle.goToSlide(this.docViewer.currentPage);
+            } else if (this.docViewer.ext === 'docx') {
+                this.docViewer.officeHandle.goToPage(this.docViewer.currentPage);
             }
+            this.docViewer.currentPage++;
         },
-        officePrevSlide() {
-            if (this.docViewer.officeHandle && this.docViewer.currentPage > 1) {
-                const prev = this.docViewer.currentPage - 2;
-                this.docViewer.officeHandle.goToSlide(prev);
-                this.docViewer.currentPage = prev + 1;
+        officePrev() {
+            if (!this.docViewer.officeHandle || this.docViewer.currentPage <= 1) return;
+            this.docViewer.currentPage--;
+            if (this.docViewer.ext === 'pptx') {
+                this.docViewer.officeHandle.goToSlide(this.docViewer.currentPage - 1);
+            } else if (this.docViewer.ext === 'docx') {
+                this.docViewer.officeHandle.goToPage(this.docViewer.currentPage - 1);
             }
         },
         openPdfViewer(file, isShare = false, shareToken = '') {
@@ -6160,7 +6171,7 @@ function shareApp() {
         comicViewer: { show: false, file: null, pages: [], pageUrls: [], currentPageIndex: 0, loading: false, fitMode: 'height', pageLoading: false, scrollMode: 'page', autoScrollActive: false, autoScrollSpeed: 2, settingsOpen: false, direction: 'ltr', viewMode: 'single', filter: 'none', zoomActive: false, touchStartX: 0, touchStartY: 0 },
         epubViewer: { show: false, file: null, loading: false, sidebarOpen: false, toc: [], fontSize: 100, pageProgress: 0, scrollMode: 'scrolled', autoScrollActive: false, autoScrollSpeed: 2, settingsOpen: false, spine: [], resourceBaseUrl: '', currentChapter: 0, title: '', theme: 'system', fontFamily: 'sans-serif' },
         pdfViewer: { show: false, file: null, loading: false, sidebarOpen: false, toc: [], zoom: 100, pageProgress: 0, settingsOpen: false, currentPage: 1, numPages: 0, darkModeFilter: false, pageLoading: false, autoScrollActive: false, autoScrollSpeed: 2, scrollMode: 'page' },
-        docViewer: { show: false, file: null, loading: false, content: '', type: 'text', error: '', pages: 0, currentPage: 0, officeHandle: null },
+        docViewer: { show: false, file: null, loading: false, content: '', type: 'text', error: '', pages: 0, currentPage: 0, officeHandle: null, ext: '' },
         fileInfoModal: { show: false, file: null, typeName: '', ext: '', svgIcon: '', bgColor: '', isMedia: false, mediaHtml: '', isLarge: false, isPreviewLoading: false, needsLoad: false, tooLarge: false, bypassWarning: false, unsupportedMedia: false },
         mediaPlayerModal: { show: false, file: null, isAudio: false, isPlaying: false, minimized: false, x: null, y: null, playlist: [], playlistIndex: -1, playlistOpen: false },
         contextMenu: { show: false, x: 0, y: 0, file: null },
@@ -7820,7 +7831,8 @@ function shareApp() {
         },
         closeDocViewer() {
             if (window.VueOffice) window.VueOffice.destroy();
-            this.docViewer = { show: false, file: null, loading: false, content: '', type: 'text', error: '' };
+            document.removeEventListener('keydown', this._officeKeyHandler);
+            this.docViewer = { show: false, file: null, loading: false, content: '', type: 'text', error: '', pages: 0, currentPage: 0, officeHandle: null, ext: '' };
         },
         async openOfficeViewer(file) {
             if (!file) return;
@@ -7830,55 +7842,59 @@ function shareApp() {
                 window.open(`/download/${file.id}`, '_blank');
                 return;
             }
-            this.docViewer = { show: true, file, loading: true, content: '', type: 'office', error: '', pages: 0, currentPage: 0, officeHandle: null };
+            this.docViewer = { show: true, file, loading: true, content: '', type: 'office', error: '', pages: 0, currentPage: 0, officeHandle: null, ext };
             try {
                 await TeleCloud.ensureOfficeLoaded();
                 const token = this.shareToken || this.token || '';
-                let downloadUrl;
-                if (token) {
-                    downloadUrl = file && file.id ? `/s/${token}/file/${file.id}/stream` : `/s/${token}/stream`;
-                } else {
-                    downloadUrl = `/download/${file.id}`;
-                }
+                const downloadUrl = token ? (file.id ? `/s/${token}/file/${file.id}/stream` : `/s/${token}/stream`) : `/download/${file.id}`;
                 const resp = await fetch(downloadUrl, { credentials: 'same-origin' });
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const arrayBuffer = await resp.arrayBuffer();
                 this.docViewer.loading = false;
                 await this.$nextTick();
-                await new Promise(r => setTimeout(r, 50));
+                await new Promise(r => setTimeout(r, 80));
                 const container = document.getElementById('office-viewer-container');
                 if (!container) throw new Error('Viewer container not found');
                 const self = this;
                 const handle = window.VueOffice.render(container, ext, arrayBuffer, {
                     onRendered({ pages, type }) {
                         self.docViewer.pages = pages;
-                        self.docViewer.currentPage = type === 'pptx' ? 1 : 0;
-                        self.docViewer.loading = false;
+                        self.docViewer.currentPage = (type === 'pptx' || type === 'docx') && pages > 0 ? 1 : 0;
                     },
-                    onError(err) {
-                        self.docViewer.loading = false;
-                        self.docViewer.error = err?.message || 'render_failed';
-                    }
+                    onPageChange(page) { self.docViewer.currentPage = page; },
+                    onError(err) { self.docViewer.error = err?.message || 'render_failed'; }
                 });
                 this.docViewer.officeHandle = handle;
+                this._officeKeyHandler = (e) => {
+                    if (!self.docViewer.show) return;
+                    if (e.key === 'Escape') { e.preventDefault(); self.closeDocViewer(); return; }
+                    if (self.docViewer.ext === 'xlsx' || self.docViewer.ext === 'xls') return;
+                    if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); self.officeNext(); }
+                    if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); self.officePrev(); }
+                };
+                document.addEventListener('keydown', this._officeKeyHandler);
             } catch (e) {
                 console.error('Office viewer error:', e);
                 this.docViewer.loading = false;
                 this.docViewer.error = e.message || 'Failed to render document';
             }
         },
-        officeNextSlide() {
-            if (this.docViewer.officeHandle && this.docViewer.currentPage < this.docViewer.pages) {
-                const next = this.docViewer.currentPage;
-                this.docViewer.officeHandle.goToSlide(next);
-                this.docViewer.currentPage = next + 1;
+        officeNext() {
+            if (!this.docViewer.officeHandle || this.docViewer.currentPage >= this.docViewer.pages) return;
+            if (this.docViewer.ext === 'pptx') {
+                this.docViewer.officeHandle.goToSlide(this.docViewer.currentPage);
+            } else if (this.docViewer.ext === 'docx') {
+                this.docViewer.officeHandle.goToPage(this.docViewer.currentPage);
             }
+            this.docViewer.currentPage++;
         },
-        officePrevSlide() {
-            if (this.docViewer.officeHandle && this.docViewer.currentPage > 1) {
-                const prev = this.docViewer.currentPage - 2;
-                this.docViewer.officeHandle.goToSlide(prev);
-                this.docViewer.currentPage = prev + 1;
+        officePrev() {
+            if (!this.docViewer.officeHandle || this.docViewer.currentPage <= 1) return;
+            this.docViewer.currentPage--;
+            if (this.docViewer.ext === 'pptx') {
+                this.docViewer.officeHandle.goToSlide(this.docViewer.currentPage - 1);
+            } else if (this.docViewer.ext === 'docx') {
+                this.docViewer.officeHandle.goToPage(this.docViewer.currentPage - 1);
             }
         },
         openPdfViewer(file, isShare = false, shareToken = '') {
@@ -8674,7 +8690,7 @@ function shareFileApp() {
         comicViewer: { show: false, file: null, pages: [], pageUrls: [], currentPageIndex: 0, loading: false, fitMode: 'height', pageLoading: false, scrollMode: 'page', autoScrollActive: false, autoScrollSpeed: 2, settingsOpen: false, direction: 'ltr', viewMode: 'single', filter: 'none', zoomActive: false, touchStartX: 0, touchStartY: 0 },
         epubViewer: { show: false, file: null, loading: false, sidebarOpen: false, toc: [], fontSize: 100, pageProgress: 0, scrollMode: 'scrolled', autoScrollActive: false, autoScrollSpeed: 2, settingsOpen: false, spine: [], resourceBaseUrl: '', currentChapter: 0, title: '', theme: 'system', fontFamily: 'sans-serif' },
         pdfViewer: { show: false, file: null, loading: false, sidebarOpen: false, toc: [], zoom: 100, pageProgress: 0, settingsOpen: false, currentPage: 1, numPages: 0, darkModeFilter: false, pageLoading: false, autoScrollActive: false, autoScrollSpeed: 2, scrollMode: 'page' },
-        docViewer: { show: false, file: null, loading: false, content: '', type: 'text', error: '', pages: 0, currentPage: 0, officeHandle: null },
+        docViewer: { show: false, file: null, loading: false, content: '', type: 'text', error: '', pages: 0, currentPage: 0, officeHandle: null, ext: '' },
         toastModal: { show: false, message: '', type: 'success', persistent: false },
         toastTimeout: null,
         
@@ -9709,7 +9725,8 @@ function shareFileApp() {
         },
         closeDocViewer() {
             if (window.VueOffice) window.VueOffice.destroy();
-            this.docViewer = { show: false, file: null, loading: false, content: '', type: 'text', error: '' };
+            document.removeEventListener('keydown', this._officeKeyHandler);
+            this.docViewer = { show: false, file: null, loading: false, content: '', type: 'text', error: '', pages: 0, currentPage: 0, officeHandle: null, ext: '' };
         },
         async openOfficeViewer(file) {
             if (!file) return;
@@ -9719,55 +9736,59 @@ function shareFileApp() {
                 window.open(`/download/${file.id}`, '_blank');
                 return;
             }
-            this.docViewer = { show: true, file, loading: true, content: '', type: 'office', error: '', pages: 0, currentPage: 0, officeHandle: null };
+            this.docViewer = { show: true, file, loading: true, content: '', type: 'office', error: '', pages: 0, currentPage: 0, officeHandle: null, ext };
             try {
                 await TeleCloud.ensureOfficeLoaded();
                 const token = this.token || '';
-                let downloadUrl;
-                if (token) {
-                    downloadUrl = file && file.id ? `/s/${token}/file/${file.id}/stream` : `/s/${token}/stream`;
-                } else {
-                    downloadUrl = `/download/${file.id}`;
-                }
+                const downloadUrl = token ? (file.id ? `/s/${token}/file/${file.id}/stream` : `/s/${token}/stream`) : `/download/${file.id}`;
                 const resp = await fetch(downloadUrl, { credentials: 'same-origin' });
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const arrayBuffer = await resp.arrayBuffer();
                 this.docViewer.loading = false;
                 await this.$nextTick();
-                await new Promise(r => setTimeout(r, 50));
+                await new Promise(r => setTimeout(r, 80));
                 const container = document.getElementById('office-viewer-container');
                 if (!container) throw new Error('Viewer container not found');
                 const self = this;
                 const handle = window.VueOffice.render(container, ext, arrayBuffer, {
                     onRendered({ pages, type }) {
                         self.docViewer.pages = pages;
-                        self.docViewer.currentPage = type === 'pptx' ? 1 : 0;
-                        self.docViewer.loading = false;
+                        self.docViewer.currentPage = (type === 'pptx' || type === 'docx') && pages > 0 ? 1 : 0;
                     },
-                    onError(err) {
-                        self.docViewer.loading = false;
-                        self.docViewer.error = err?.message || 'render_failed';
-                    }
+                    onPageChange(page) { self.docViewer.currentPage = page; },
+                    onError(err) { self.docViewer.error = err?.message || 'render_failed'; }
                 });
                 this.docViewer.officeHandle = handle;
+                this._officeKeyHandler = (e) => {
+                    if (!self.docViewer.show) return;
+                    if (e.key === 'Escape') { e.preventDefault(); self.closeDocViewer(); return; }
+                    if (self.docViewer.ext === 'xlsx' || self.docViewer.ext === 'xls') return;
+                    if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); self.officeNext(); }
+                    if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); self.officePrev(); }
+                };
+                document.addEventListener('keydown', this._officeKeyHandler);
             } catch (e) {
                 console.error('Office viewer error:', e);
                 this.docViewer.loading = false;
                 this.docViewer.error = e.message || 'Failed to render document';
             }
         },
-        officeNextSlide() {
-            if (this.docViewer.officeHandle && this.docViewer.currentPage < this.docViewer.pages) {
-                const next = this.docViewer.currentPage;
-                this.docViewer.officeHandle.goToSlide(next);
-                this.docViewer.currentPage = next + 1;
+        officeNext() {
+            if (!this.docViewer.officeHandle || this.docViewer.currentPage >= this.docViewer.pages) return;
+            if (this.docViewer.ext === 'pptx') {
+                this.docViewer.officeHandle.goToSlide(this.docViewer.currentPage);
+            } else if (this.docViewer.ext === 'docx') {
+                this.docViewer.officeHandle.goToPage(this.docViewer.currentPage);
             }
+            this.docViewer.currentPage++;
         },
-        officePrevSlide() {
-            if (this.docViewer.officeHandle && this.docViewer.currentPage > 1) {
-                const prev = this.docViewer.currentPage - 2;
-                this.docViewer.officeHandle.goToSlide(prev);
-                this.docViewer.currentPage = prev + 1;
+        officePrev() {
+            if (!this.docViewer.officeHandle || this.docViewer.currentPage <= 1) return;
+            this.docViewer.currentPage--;
+            if (this.docViewer.ext === 'pptx') {
+                this.docViewer.officeHandle.goToSlide(this.docViewer.currentPage - 1);
+            } else if (this.docViewer.ext === 'docx') {
+                this.docViewer.officeHandle.goToPage(this.docViewer.currentPage - 1);
             }
         },
         openPdfViewer(file, isShare = false, shareToken = '') {

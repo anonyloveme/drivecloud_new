@@ -289,6 +289,8 @@
     "rename": "Đổi tên",
     "rename_desc": "Giữ cả hai tập tin bằng cách thêm số vào tên.",
     "rename_title": "Đổi tên file/thư mục:",
+    "doc_loading": "Đang tải tài liệu...",
+    "doc_render_failed": "Không thể hiển thị tài liệu",
     "render_failed": "Không thể hiển thị tài liệu. Vui lòng tải về.",
     "reset_admin_desc": "Vui lòng thiết lập mật khẩu mới cho tài khoản quản trị.",
     "reset_admin_title": "Đặt lại mật khẩu Admin",

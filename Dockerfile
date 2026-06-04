@@ -49,10 +49,11 @@ WORKDIR /app
 # Create a non-root user
 RUN addgroup -g 65532 nonroot && adduser -u 65532 -G nonroot -D nonroot
 
-# Install required packages: ca-certificates, tzdata, ffmpeg, python3, aria2.
+# Install required packages: ca-certificates, tzdata, ffmpeg, python3, aria2, nodejs.
 # yt-dlp is downloaded from upstream and SHA-256 verified against the
 # checksum file published alongside the same release tag.
-RUN apk add --no-cache ca-certificates tzdata ffmpeg python3 aria2 wget \
+# nodejs is installed as yt-dlp's JS runtime (required for YouTube extraction).
+RUN apk add --no-cache ca-certificates tzdata ffmpeg python3 aria2 wget nodejs \
     && set -eux \
     && wget -qO /tmp/yt-dlp        https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
     && wget -qO /tmp/yt-dlp.sha256 https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS \

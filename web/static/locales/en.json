@@ -336,6 +336,8 @@
     "rename": "Rename",
     "rename_desc": "Keep both files by adding a number to the name.",
     "rename_title": "Rename file/folder:",
+    "doc_loading": "Loading document...",
+    "doc_render_failed": "Cannot display document",
     "render_failed": "Failed to render document. Try downloading instead.",
     "reset_admin_desc": "Please set a new password for the admin account.",
     "reset_admin_title": "Reset Admin Password",

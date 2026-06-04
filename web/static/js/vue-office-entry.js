@@ -1,4 +1,4 @@
-import { createApp, h, ref, nextTick, onMounted, onUnmounted, watch } from 'vue';
+import { createApp, h, ref, nextTick, onMounted, onUnmounted } from 'vue';
 import VueOfficeDocx from '@vue-office/docx/lib/v3/vue-office-docx.mjs';
 import VueOfficeExcel from '@vue-office/excel/lib/v3/vue-office-excel.mjs';
 import VueOfficePptx from '@vue-office/pptx/lib/v3/vue-office-pptx.mjs';
@@ -7,82 +7,79 @@ import '@vue-office/docx/lib/v3/index.css';
 import '@vue-office/excel/lib/v3/index.css';
 
 let currentApp = null;
-let currentSlides = [];
-let currentSlideIdx = 0;
+let pageObserver = null;
 
-function countDocxPages(container) {
-    const pages = container.querySelectorAll('.docx-wrapper > section, .docx-wrapper > .page, .docx-wrapper > div[class*="page"]');
-    return pages.length || container.querySelectorAll('.docx-wrapper > *').length || 1;
+function getDocxPages(container) {
+    const wrapper = container.querySelector('.docx-wrapper');
+    if (!wrapper) return [];
+    const pages = wrapper.querySelectorAll(':scope > section, :scope > .page, :scope > div[class*="page"]');
+    return pages.length > 0 ? Array.from(pages) : Array.from(wrapper.children);
 }
 
-function countPptxSlides(container) {
-    const slides = container.querySelectorAll('.pptx-preview-wrapper > div, [class*="slide"], [class*="pptx"]');
-    if (slides.length > 0) return slides.length;
-    const allDivs = container.querySelectorAll('.pptx-preview-wrapper > *');
-    return allDivs.length || 1;
+function getPptxSlides(container) {
+    const wrapper = container.querySelector('.pptx-preview-wrapper');
+    if (!wrapper) return [];
+    return Array.from(wrapper.children);
 }
 
-function scrollToSlide(container, idx) {
-    const slides = container.querySelectorAll('.pptx-preview-wrapper > div, [class*="slide"], [class*="pptx"]');
-    const target = slides.length > 0 ? slides[idx] : container.querySelectorAll('.pptx-preview-wrapper > *')[idx];
-    if (target) {
-        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        currentSlideIdx = idx;
-    }
+function setupPageObserver(container, pages, callbacks) {
+    if (pageObserver) { pageObserver.disconnect(); pageObserver = null; }
+    if (!pages.length || !window.IntersectionObserver) return;
+
+    let lastPage = 0;
+    pageObserver = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+            if (entry.isIntersecting) {
+                const idx = pages.indexOf(entry.target);
+                if (idx >= 0 && idx !== lastPage) {
+                    lastPage = idx;
+                    if (callbacks && callbacks.onPageChange) {
+                        callbacks.onPageChange(idx + 1);
+                    }
+                }
+            }
+        }
+    }, { root: container, threshold: 0.5 });
+
+    pages.forEach(p => pageObserver.observe(p));
 }
 
 window.VueOffice = {
     render(container, type, arrayBuffer, callbacks) {
         this.destroy();
         const ext = type.toLowerCase();
-
-        const componentMap = {
-            docx: VueOfficeDocx,
-            xlsx: VueOfficeExcel,
-            xls: VueOfficeExcel,
-            pptx: VueOfficePptx,
-        };
-
+        const componentMap = { docx: VueOfficeDocx, xlsx: VueOfficeExcel, xls: VueOfficeExcel, pptx: VueOfficePptx };
         const component = componentMap[ext];
-        if (!component) {
-            throw new Error('Unsupported: .' + ext);
-        }
+        if (!component) throw new Error('Unsupported: .' + ext);
 
         const src = ref(arrayBuffer);
         const self = this;
 
         const app = createApp({
             setup() {
-                onMounted(() => {
-                    nextTick(() => {
-                        setTimeout(() => {
-                            const pages = ext === 'docx' ? countDocxPages(container) :
-                                          ext === 'pptx' ? countPptxSlides(container) : 0;
-                            if (callbacks && callbacks.onRendered) {
-                                callbacks.onRendered({ pages, type: ext });
-                            }
-                        }, 500);
-                    });
-                });
-
                 return () => h(component, {
                     src: src.value,
-                    style: 'width: 100%; min-height: 100%;',
+                    style: ext === 'xlsx' || ext === 'xls'
+                        ? 'width: 100%; height: 100%;'
+                        : 'width: 100%; min-height: 100%;',
                     onRendered: () => {
                         nextTick(() => {
                             setTimeout(() => {
-                                const pages = ext === 'docx' ? countDocxPages(container) :
-                                              ext === 'pptx' ? countPptxSlides(container) : 0;
-                                if (callbacks && callbacks.onRendered) {
-                                    callbacks.onRendered({ pages, type: ext });
+                                if (ext === 'docx') {
+                                    const pages = getDocxPages(container);
+                                    if (callbacks && callbacks.onRendered) callbacks.onRendered({ pages: pages.length, type: ext });
+                                    setupPageObserver(container, pages, callbacks);
+                                } else if (ext === 'pptx') {
+                                    const slides = getPptxSlides(container);
+                                    if (callbacks && callbacks.onRendered) callbacks.onRendered({ pages: slides.length, type: ext });
+                                } else {
+                                    if (callbacks && callbacks.onRendered) callbacks.onRendered({ pages: 0, type: ext });
                                 }
-                            }, 300);
+                            }, 400);
                         });
                     },
                     onError: (err) => {
-                        if (callbacks && callbacks.onError) {
-                            callbacks.onError(err);
-                        }
+                        if (callbacks && callbacks.onError) callbacks.onError(err);
                     }
                 });
             }
@@ -90,23 +87,24 @@ window.VueOffice = {
 
         app.mount(container);
         currentApp = app;
-        currentSlides = [];
-        currentSlideIdx = 0;
 
         return {
             destroy() { self.destroy(); },
-            goToSlide(idx) { scrollToSlide(container, idx); currentSlideIdx = idx; },
-            getSlideCount() { return countPptxSlides(container); },
-            getCurrentSlide() { return currentSlideIdx; },
+            goToSlide(idx) {
+                const slides = getPptxSlides(container);
+                if (slides[idx]) slides[idx].scrollIntoView({ behavior: 'smooth', block: 'start' });
+            },
+            goToPage(idx) {
+                const pages = getDocxPages(container);
+                if (pages[idx]) pages[idx].scrollIntoView({ behavior: 'smooth', block: 'start' });
+            },
+            getSlideCount() { return getPptxSlides(container).length; },
+            getPageCount() { return getDocxPages(container).length; },
         };
     },
 
     destroy() {
-        if (currentApp) {
-            try { currentApp.unmount(); } catch (e) {}
-            currentApp = null;
-        }
-        currentSlides = [];
-        currentSlideIdx = 0;
+        if (pageObserver) { pageObserver.disconnect(); pageObserver = null; }
+        if (currentApp) { try { currentApp.unmount(); } catch (e) {} currentApp = null; }
     }
 };

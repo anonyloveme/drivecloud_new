@@ -93,7 +93,7 @@ func GetYTDLPFormats(url string, cfg *config.Config, owner string) (*YTDLPInfo, 
 		return nil, fmt.Errorf("forbidden_url")
 	}
 
-	args := []string{"-J", "--no-playlist", url}
+	args := []string{"-J", "--no-playlist", "--js-runtimes", "node", url}
 
 	// Check for user cookie file
 	cookieFile := filepath.Join(cfg.CookiesDir, fmt.Sprintf("user_%s.txt", owner))
@@ -231,129 +231,151 @@ func ProcessYTDLPUpload(ctx context.Context, url, formatID, path, taskID, downlo
 	tempFileName := fmt.Sprintf("ytdlp_%s_%%(title)s.%%(ext)s", taskID)
 	tempPathPattern := filepath.Join(cfg.TempDir, tempFileName)
 
-	args := []string{
+	baseArgs := []string{
 		"--newline",
 		"--no-playlist",
+		"--js-runtimes", "node",
 		"-o", tempPathPattern,
 	}
 
 	// Audio conversion logic
 	if downloadType == "audio" {
-		args = append(args, "--extract-audio", "--audio-format", "mp3", "--embed-thumbnail", "--add-metadata", "--convert-thumbnails", "jpg")
+		baseArgs = append(baseArgs, "--extract-audio", "--audio-format", "mp3", "--embed-thumbnail", "--add-metadata", "--convert-thumbnails", "jpg")
 	}
 
 	// Check for user cookie file
 	cookieFile := filepath.Join(cfg.CookiesDir, fmt.Sprintf("user_%s.txt", owner))
 	if _, err := os.Stat(cookieFile); err == nil {
-		args = append(args, "--cookies", cookieFile)
+		baseArgs = append(baseArgs, "--cookies", cookieFile)
 	}
 
-	// Format selection flags must come BEFORE the URL
+	// Build format args for primary attempt and fallback
+	var primaryFormatArgs, fallbackFormatArgs []string
 	if formatID != "" {
 		switch downloadType {
 		case "video":
-			// Ensure video download includes audio if a specific video format is selected
-			args = append(args, "-f", formatID+"+bestaudio/best", "--merge-output-format", "mp4")
+			primaryFormatArgs = []string{"-f", formatID + "+bestaudio/best", "--merge-output-format", "mp4"}
+			fallbackFormatArgs = []string{"-f", "best", "--merge-output-format", "mp4"}
 		case "audio":
-			// yt-dlp handles -f with --extract-audio correctly
-			args = append(args, "-f", formatID)
+			primaryFormatArgs = []string{"-f", formatID}
+			fallbackFormatArgs = []string{"-f", "bestaudio/best"}
 		}
 	} else {
-		// Default smart selection based on type
 		switch downloadType {
 		case "audio":
-			args = append(args, "-f", "bestaudio/best")
-		default: // "video" (includes audio)
-			args = append(args, "-f", "bestvideo+bestaudio/best", "--merge-output-format", "mp4")
+			primaryFormatArgs = []string{"-f", "bestaudio/best"}
+			fallbackFormatArgs = primaryFormatArgs
+		default:
+			primaryFormatArgs = []string{"-f", "bestvideo*+bestaudio/bestvideo+bestaudio/best", "--merge-output-format", "mp4"}
+			fallbackFormatArgs = []string{"-f", "best", "--merge-output-format", "mp4"}
 		}
 	}
 
-	// URL must be the last argument
-	args = append(args, url)
+	// Try primary format first; on format failure, retry with fallback
+	type runResult struct {
+		stderr    string
+		exitOK    bool
+		timedOut  bool
+	}
+	attempts := [][]string{primaryFormatArgs}
+	if fmt.Sprintf("%v", primaryFormatArgs) != fmt.Sprintf("%v", fallbackFormatArgs) {
+		attempts = append(attempts, fallbackFormatArgs)
+	}
 
-	// Create a context with a 1-hour timeout for the ytdlp process
-	ytdlpCtx, cancelTimeout := context.WithTimeout(ctx, 1*time.Hour)
-	defer cancelTimeout()
+	var lastResult runResult
+	for attemptIdx, formatArgs := range attempts {
+		args := append(append([]string{}, baseArgs...), formatArgs...)
+		args = append(args, url) // URL must be last
 
-	cmd := exec.CommandContext(ytdlpCtx, cfg.YTDLPPath, args...)
-	cmd.Env = os.Environ()
-	setProcessGroup(cmd)
+		if attemptIdx > 0 {
+			UpdateTask(taskID, "downloading", 0, "ytdlp_retry_best", owner)
+			log.Printf("[YTDLP] Retry with fallback format for task %s (attempt %d)", taskID, attemptIdx+1)
+		}
 
-	// Capture both stdout and stderr interleaved for real-time progress
-	var stderrBuf strings.Builder
-	pr, pw := io.Pipe()
+		ytdlpCtx, cancelTimeout := context.WithTimeout(ctx, 1*time.Hour)
 
-	// Create a tee for stderr so we can still capture the full error log
-	stderrWriter := io.MultiWriter(pw, &stderrBuf)
+		cmd := exec.CommandContext(ytdlpCtx, cfg.YTDLPPath, args...)
+		cmd.Env = os.Environ()
+		setProcessGroup(cmd)
 
-	cmd.Stdout = pw
-	cmd.Stderr = stderrWriter
+		var stderrBuf strings.Builder
+		pr, pw := io.Pipe()
+		stderrWriter := io.MultiWriter(pw, &stderrBuf)
+		cmd.Stdout = pw
+		cmd.Stderr = stderrWriter
 
-	if err := cmd.Start(); err != nil {
-		UpdateTaskWithFile(taskID, "error", 0, "start_error", "", owner, 0, 0)
-		pw.Close()
+		if err := cmd.Start(); err != nil {
+			cancelTimeout()
+			pw.Close()
+			UpdateTaskWithFile(taskID, "error", 0, "start_error", "", owner, 0, 0)
+			return
+		}
+
+		go func() {
+			_ = cmd.Wait()
+			pw.Close()
+		}()
+
+		go func() {
+			<-ytdlpCtx.Done()
+			killProcessGroup(cmd)
+		}()
+
+		progressRegex := regexp.MustCompile(`\[download\]\s+(\d+(?:\.\d+)?)%`)
+		lastPercent := -1
+		scanner := bufio.NewScanner(pr)
+		for scanner.Scan() {
+			line := scanner.Text()
+			matches := progressRegex.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				percent, _ := strconv.ParseFloat(matches[1], 64)
+				p := int(percent)
+				if p != lastPercent {
+					UpdateTask(taskID, "downloading", p, "downloading", owner)
+					lastPercent = p
+				}
+			} else {
+				if strings.HasPrefix(line, "[Merger] Merging formats") {
+					UpdateTask(taskID, "downloading", 100, "ytdlp_merging", owner)
+				} else if strings.Contains(line, "Adding thumbnail to") || strings.HasPrefix(line, "[EmbedThumbnail]") {
+					UpdateTask(taskID, "downloading", 100, "ytdlp_thumbnail", owner)
+				}
+			}
+		}
+
+		timedOut := ytdlpCtx.Err() == context.DeadlineExceeded
+		exitOK := cmd.ProcessState != nil && cmd.ProcessState.Success()
+		lastResult = runResult{stderr: stderrBuf.String(), exitOK: exitOK, timedOut: timedOut}
+		cancelTimeout()
+
+		if exitOK {
+			break // success, no need to retry
+		}
+
+		// Check if this is a format-related error worth retrying
+		errMsg := lastResult.stderr
+		isFormatErr := strings.Contains(errMsg, "Requested format is not available") ||
+			strings.Contains(errMsg, "no matches") ||
+			strings.Contains(errMsg, "format") && strings.Contains(errMsg, "not available")
+
+		if !isFormatErr || attemptIdx == len(attempts)-1 {
+			break // not a format error, or last attempt — don't retry
+		}
+	}
+
+	if ctx.Err() != nil {
+		UpdateTask(taskID, "error", 0, "cancelled", owner)
 		return
 	}
-
-	// Close the pipe writer when the command finishes to unblock the scanner
-	go func() {
-		_ = cmd.Wait()
-		pw.Close()
-	}()
-
-	// Ensure whole process group is killed on context cancellation
-	go func() {
-		<-ytdlpCtx.Done()
-		killProcessGroup(cmd)
-	}()
-
-	// Progress regex: [download]  10.0% of 100.00MiB at  1.00MiB/s ETA 01:30
-	// Updated to handle both "10%" and "10.0%"
-	progressRegex := regexp.MustCompile(`\[download\]\s+(\d+(?:\.\d+)?)%`)
-
-	lastPercent := -1
-	scanner := bufio.NewScanner(pr)
-	for scanner.Scan() {
-		line := scanner.Text()
-		matches := progressRegex.FindStringSubmatch(line)
-		if len(matches) > 1 {
-			percent, _ := strconv.ParseFloat(matches[1], 64)
-			p := int(percent)
-			if p != lastPercent {
-				UpdateTask(taskID, "downloading", p, "downloading", owner)
-				lastPercent = p
-			}
-		} else {
-			// Clean informative messages
-			if strings.HasPrefix(line, "[Merger] Merging formats") {
-				UpdateTask(taskID, "downloading", 100, "ytdlp_merging", owner)
-			} else if strings.Contains(line, "Adding thumbnail to") || strings.HasPrefix(line, "[EmbedThumbnail]") {
-				UpdateTask(taskID, "downloading", 100, "ytdlp_thumbnail", owner)
-			}
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		log.Printf("[YTDLP scanner] error: %v", err)
-	}
-
-	// The wait is handled in the goroutine above, but we check if we actually finished correctly
-	if ctx.Err() != nil || ytdlpCtx.Err() != nil {
-		statusMsg := "cancelled"
-		if ytdlpCtx.Err() == context.DeadlineExceeded {
-			statusMsg = "ytdlp_timeout"
-		}
-		UpdateTask(taskID, "error", 0, statusMsg, owner)
+	if lastResult.timedOut {
+		UpdateTask(taskID, "error", 0, "ytdlp_timeout", owner)
 		return
 	}
-
-	// Check if process failed after we've finished scanning
-	// (cmd.ProcessState might be nil if Start failed, but we checked that)
-	if cmd.ProcessState != nil && !cmd.ProcessState.Success() {
-		errMsg := stderrBuf.String()
+	if !lastResult.exitOK {
+		errMsg := lastResult.stderr
 		if idx := strings.Index(errMsg, "ERROR:"); idx != -1 {
 			errMsg = strings.TrimSpace(errMsg[idx+6:])
 		}
-
 		cleanErr := translateYTDLPError(errMsg)
 		UpdateTask(taskID, "error", 0, cleanErr, owner)
 		return
