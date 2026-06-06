@@ -26,7 +26,7 @@ import (
 const (
 	driveAPIBase     = "https://www.googleapis.com/drive/v3/files"
 	maxGDriveDepth   = 10
-	maxGDriveFiles   = 500
+	maxGDriveFiles   = 10000
 	googleNativeMime = "application/vnd.google-apps."
 )
 
@@ -74,12 +74,14 @@ func (h *Handler) handlePostGDriveImport(c *gin.Context) {
 		return
 	}
 
+	// Try OAuth first, fall back to API key
+	accessToken := getValidAccessToken()
 	apiKey := database.GetSetting("gdrive_api_key")
 	if apiKey == "" {
 		apiKey = os.Getenv("GDRIVE_API_KEY")
 	}
-	if apiKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "gdrive_api_key_not_set"})
+	if accessToken == "" && apiKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "gdrive_auth_not_configured"})
 		return
 	}
 
@@ -94,7 +96,7 @@ func (h *Handler) handlePostGDriveImport(c *gin.Context) {
 	dbPath := mapPath(req.Path, username, isAdmin)
 
 	taskID := uuid.New().String()
-	go h.processGDriveImport(taskID, folderID, dbPath, apiKey, username)
+	go h.processGDriveImport(taskID, folderID, dbPath, apiKey, accessToken, username)
 
 	c.JSON(http.StatusOK, gin.H{"task_id": taskID})
 }
@@ -104,7 +106,14 @@ func (h *Handler) handleGetGDriveStatus(c *gin.Context) {
 	if apiKey == "" {
 		apiKey = os.Getenv("GDRIVE_API_KEY")
 	}
-	c.JSON(http.StatusOK, gin.H{"configured": apiKey != ""})
+	refreshToken := database.GetSetting("gdrive_oauth_refresh_token")
+	clientID := database.GetSetting("gdrive_oauth_client_id")
+	c.JSON(http.StatusOK, gin.H{
+		"configured":    apiKey != "" || refreshToken != "",
+		"api_key_set":   apiKey != "",
+		"oauth_connected": refreshToken != "",
+		"oauth_client_id": clientID != "",
+	})
 }
 
 func (h *Handler) handlePostGDriveAPIKey(c *gin.Context) {
@@ -120,7 +129,31 @@ func (h *Handler) handlePostGDriveAPIKey(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "success", "configured": apiKey != ""})
 }
 
-func (h *Handler) processGDriveImport(taskID, folderID, dbPath, apiKey, owner string) {
+func (h *Handler) handlePostGDriveOAuthConfig(c *gin.Context) {
+	if !c.GetBool("is_admin") {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+	var req struct {
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+		RedirectURI  string `json:"redirect_uri"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+		return
+	}
+	if req.ClientID == "" || req.ClientSecret == "" || req.RedirectURI == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "all_fields_required"})
+		return
+	}
+	database.SetSetting("gdrive_oauth_client_id", req.ClientID)
+	database.SetSetting("gdrive_oauth_client_secret", req.ClientSecret)
+	database.SetSetting("gdrive_oauth_redirect_uri", req.RedirectURI)
+	c.JSON(http.StatusOK, gin.H{"status": "success"})
+}
+
+func (h *Handler) processGDriveImport(taskID, folderID, dbPath, apiKey, accessToken, owner string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -136,14 +169,14 @@ func (h *Handler) processGDriveImport(taskID, folderID, dbPath, apiKey, owner st
 	tgclient.UpdateTask(taskID, "listing", 0, "gdrive_listing", owner)
 
 	// Fetch root folder name to include in path
-	rootName := getDriveFileName(ctx, apiKey, folderID)
+	rootName := sanitizePathSegment(getDriveFileName(ctx, apiKey, accessToken, folderID))
 	if rootName == "" {
 		rootName = "gdrive_import"
 	}
-	log.Printf("[GDrive] Starting import: folderID=%s rootName=%q dbPath=%q apiKey_len=%d", folderID, rootName, dbPath, len(apiKey))
+	log.Printf("[GDrive] Starting import: folderID=%s rootName=%q dbPath=%q auth=%s", folderID, rootName, dbPath, authMode(accessToken, apiKey))
 
 	// Pass root folder name as initial parentPath so the tree mirrors Drive
-	files, folders, skipped, err := listDriveFilesRecursive(ctx, apiKey, folderID, rootName, 0)
+	files, folders, skipped, err := listDriveFilesRecursive(ctx, apiKey, accessToken, folderID, rootName, 0)
 	if err != nil {
 		log.Printf("[GDrive] listDriveFilesRecursive failed: %v", err)
 		tgclient.UpdateTask(taskID, "error", 0, "gdrive_list_failed: "+truncate(err.Error(), 200), owner)
@@ -239,7 +272,7 @@ func (h *Handler) processGDriveImport(taskID, folderID, dbPath, apiKey, owner st
 					log.Printf("[GDrive] WARNING: worker EnsureFoldersExist(%s) failed: %v", targetPath, err)
 				}
 
-				if err := h.importOneDriveFile(ctx, f, targetPath, apiKey, owner, taskID); err != nil {
+				if err := h.importOneDriveFile(ctx, f, targetPath, apiKey, accessToken, owner, taskID); err != nil {
 					log.Printf("[GDrive] Failed to import %s: %v", f.Name, err)
 					failedMu.Lock()
 					failed = append(failed, f.Name)
@@ -271,8 +304,8 @@ func (h *Handler) processGDriveImport(taskID, folderID, dbPath, apiKey, owner st
 	tgclient.UpdateTask(taskID, "done", 100, msg, owner)
 }
 
-func (h *Handler) importOneDriveFile(ctx context.Context, f gdriveFile, targetPath, apiKey, owner, taskID string) error {
-	// BUG3 FIX: Handle zero-size files gracefully (create empty DB row, no download)
+func (h *Handler) importOneDriveFile(ctx context.Context, f gdriveFile, targetPath, apiKey, accessToken, owner, taskID string) error {
+	// Handle zero-size files gracefully (create empty DB row, no download)
 	if f.Size == 0 {
 		database.EnsureFoldersExist(targetPath, owner)
 		unlock := database.AcquireFileInsertLock(owner, targetPath)
@@ -288,9 +321,9 @@ func (h *Handler) importOneDriveFile(ctx context.Context, f gdriveFile, targetPa
 		return err
 	}
 
-	downloadURL := fmt.Sprintf("%s/%s?alt=media&key=%s", driveAPIBase, f.ID, apiKey)
-	if len(downloadURL) > 2000 {
-		downloadURL = fmt.Sprintf("%s/%s?alt=media", driveAPIBase, f.ID)
+	downloadURL := fmt.Sprintf("%s/%s?alt=media&supportsAllDrives=true", driveAPIBase, f.ID)
+	if accessToken == "" {
+		downloadURL += "&key=" + apiKey
 	}
 
 	// BUG3: Stream to temp file then upload (uploader requires seekable file path).
@@ -308,19 +341,19 @@ func (h *Handler) importOneDriveFile(ctx context.Context, f gdriveFile, targetPa
 	tempPath := tempFile.Name()
 	defer os.Remove(tempPath)
 
-	resp, err := doDriveDownload(ctx, downloadURL, apiKey)
+	resp, err := doDriveDownload(ctx, downloadURL, apiKey, accessToken)
 	if err != nil {
 		tempFile.Close()
 		return err
 	}
 	defer resp.Body.Close()
 
-	// BUG3 FIX: Virus-scan interstitial — extract confirm token and retry
+	// Virus-scan interstitial — extract confirm token and retry
 	contentType := resp.Header.Get("Content-Type")
 	if strings.Contains(contentType, "text/html") {
 		resp.Body.Close()
 		confirmURL := downloadURL + "&confirm=t"
-		resp2, err := doDriveDownload(ctx, confirmURL, apiKey)
+		resp2, err := doDriveDownload(ctx, confirmURL, apiKey, accessToken)
 		if err != nil {
 			return fmt.Errorf("virus scan retry failed: %w", err)
 		}
@@ -355,10 +388,13 @@ func (h *Handler) importOneDriveFile(ctx context.Context, f gdriveFile, targetPa
 	return err
 }
 
-func doDriveDownload(ctx context.Context, url, apiKey string) (*http.Response, error) {
+func doDriveDownload(ctx context.Context, url, apiKey, accessToken string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
+	}
+	if accessToken != "" {
+		req.Header.Set("Authorization", "Bearer "+accessToken)
 	}
 	client := &http.Client{Timeout: 30 * time.Minute}
 	resp, err := client.Do(req)
@@ -370,6 +406,9 @@ func doDriveDownload(ctx context.Context, url, apiKey string) (*http.Response, e
 		resp.Body.Close()
 		time.Sleep(5 * time.Second)
 		req2, _ := http.NewRequestWithContext(ctx, "GET", url+"&confirm=t", nil)
+		if accessToken != "" {
+			req2.Header.Set("Authorization", "Bearer "+accessToken)
+		}
 		resp2, err := client.Do(req2)
 		if err != nil {
 			return nil, fmt.Errorf("retry download: %w", err)
@@ -390,11 +429,17 @@ func doDriveDownload(ctx context.Context, url, apiKey string) (*http.Response, e
 }
 
 // getDriveFileName fetches the name of a Drive file/folder by ID.
-func getDriveFileName(ctx context.Context, apiKey, fileID string) string {
-	url := fmt.Sprintf("%s/%s?fields=name&key=%s", driveAPIBase, fileID, apiKey)
+func getDriveFileName(ctx context.Context, apiKey, accessToken, fileID string) string {
+	url := fmt.Sprintf("%s/%s?fields=name&supportsAllDrives=true", driveAPIBase, fileID)
+	if accessToken == "" {
+		url += "&key=" + apiKey
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return ""
+	}
+	if accessToken != "" {
+		req.Header.Set("Authorization", "Bearer "+accessToken)
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
@@ -412,7 +457,7 @@ func getDriveFileName(ctx context.Context, apiKey, fileID string) string {
 	return out.Name
 }
 
-func listDriveFilesRecursive(ctx context.Context, apiKey, folderID, parentPath string, depth int) ([]gdriveFile, []string, []string, error) {
+func listDriveFilesRecursive(ctx context.Context, apiKey, accessToken, folderID, parentPath string, depth int) ([]gdriveFile, []string, []string, error) {
 	if depth > maxGDriveDepth {
 		return nil, nil, nil, fmt.Errorf("max recursion depth %d exceeded", maxGDriveDepth)
 	}
@@ -431,20 +476,30 @@ func listDriveFilesRecursive(ctx context.Context, apiKey, folderID, parentPath s
 
 		q := fmt.Sprintf("'%s' in parents and trashed=false", folderID)
 		fields := "files(id,name,mimeType,size),nextPageToken"
-		listURL := fmt.Sprintf("%s?q=%s&fields=%s&key=%s&pageSize=1000", driveAPIBase, encodeQuery(q), fields, apiKey)
+		listURL := fmt.Sprintf("%s?q=%s&fields=%s&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true", driveAPIBase, encodeQuery(q), fields)
+		if accessToken != "" {
+			// OAuth: no key param, use Authorization header
+		} else {
+			listURL += "&key=" + apiKey
+		}
 		if pageToken != "" {
 			listURL += "&pageToken=" + pageToken
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "GET", listURL, nil)
 		if err != nil {
-			return nil, nil, nil, err
+			log.Printf("[GDrive] list request error: %v", err)
+			break
+		}
+		if accessToken != "" {
+			req.Header.Set("Authorization", "Bearer "+accessToken)
 		}
 
 		client := &http.Client{Timeout: 30 * time.Second}
 		resp, err := client.Do(req)
 		if err != nil {
-			return nil, nil, nil, err
+			log.Printf("[GDrive] list HTTP error: %v", err)
+			break
 		}
 
 		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
@@ -454,35 +509,35 @@ func listDriveFilesRecursive(ctx context.Context, apiKey, folderID, parentPath s
 		}
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
-			return nil, nil, nil, fmt.Errorf("drive list HTTP %d", resp.StatusCode)
+			log.Printf("[GDrive] list HTTP %d", resp.StatusCode)
+			break
 		}
 
 		var listResp gdriveListResp
 		if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
 			resp.Body.Close()
-			return nil, nil, nil, err
+			log.Printf("[GDrive] list JSON decode error: %v", err)
+			break
 		}
 		resp.Body.Close()
 
+		fileLimitReached := false
 		for _, item := range listResp.Files {
-			if len(files)+len(skipped) >= maxGDriveFiles {
-				skipped = append(skipped, "MAX_FILES_REACHED")
-				return files, folders, skipped, nil
-			}
-
 			// Log every item found for debugging
 			log.Printf("[GDrive] API item: name=%q mime=%q size=%s parentPath=%q depth=%d", item.Name, item.MimeType, item.Size, parentPath, depth)
 
 			if item.MimeType == "application/vnd.google-apps.folder" {
+				// FOLDERS always enumerated — never cut short by file limit
+				safeName := sanitizePathSegment(item.Name)
 				subPath := parentPath
 				if subPath == "" {
-					subPath = item.Name
+					subPath = safeName
 				} else {
-					subPath = subPath + "/" + item.Name
+					subPath = subPath + "/" + safeName
 				}
 				// Record every folder encountered (including empty ones) BEFORE recursing
 				folders = append(folders, subPath)
-				subFiles, subFolders, subSkipped, err := listDriveFilesRecursive(ctx, apiKey, item.ID, subPath, depth+1)
+				subFiles, subFolders, subSkipped, err := listDriveFilesRecursive(ctx, apiKey, accessToken, item.ID, subPath, depth+1)
 				if err != nil {
 					skipped = append(skipped, item.Name+"/ (error: "+err.Error()+")")
 					continue
@@ -494,11 +549,20 @@ func listDriveFilesRecursive(ctx context.Context, apiKey, folderID, parentPath s
 				skipped = append(skipped, item.Name)
 				continue
 			} else {
+				// FILES capped at maxGDriveFiles — skip collecting more but keep enumerating siblings
+				if len(files) >= maxGDriveFiles {
+					if !fileLimitReached {
+						log.Printf("[GDrive] file limit reached: collected %d files, remaining files skipped", len(files))
+						skipped = append(skipped, "MAX_FILES_REACHED")
+						fileLimitReached = true
+					}
+					continue
+				}
 				size := int64(0)
 				fmt.Sscanf(item.Size, "%d", &size)
 				files = append(files, gdriveFile{
 					ID:           item.ID,
-					Name:         item.Name,
+					Name:         sanitizePathSegment(item.Name),
 					MimeType:     item.MimeType,
 					Size:         size,
 					RelativePath: parentPath,
@@ -533,6 +597,12 @@ func encodeQuery(q string) string {
 	return r.Replace(q)
 }
 
+func sanitizePathSegment(name string) string {
+	name = strings.ReplaceAll(name, "/", "／")
+	name = strings.ReplaceAll(name, "\\", "＼")
+	return name
+}
+
 func sanitizeFilename(name string) string {
 	re := regexp.MustCompile(`[^a-zA-Z0-9._-]`)
 	return re.ReplaceAllString(name, "_")
@@ -543,4 +613,189 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n-3] + "..."
+}
+
+func authMode(accessToken, apiKey string) string {
+	if accessToken != "" {
+		return "oauth"
+	}
+	if apiKey != "" {
+		return "api_key"
+	}
+	return "none"
+}
+
+// getValidAccessToken returns a valid access token, refreshing if expired.
+// Returns "" if OAuth is not configured.
+func getValidAccessToken() string {
+	accessToken := database.GetSetting("gdrive_oauth_access_token")
+	refreshToken := database.GetSetting("gdrive_oauth_refresh_token")
+	if refreshToken == "" {
+		return ""
+	}
+
+	expiryStr := database.GetSetting("gdrive_oauth_token_expiry")
+	if expiryStr != "" {
+		expiry, err := time.Parse(time.RFC3339, expiryStr)
+		if err == nil && time.Now().Add(60*time.Second).Before(expiry) {
+			return accessToken
+		}
+	}
+
+	// Token expired or missing — refresh
+	clientID := database.GetSetting("gdrive_oauth_client_id")
+	clientSecret := database.GetSetting("gdrive_oauth_client_secret")
+	if clientID == "" || clientSecret == "" {
+		return ""
+	}
+
+	data := fmt.Sprintf("client_id=%s&client_secret=%s&refresh_token=%s&grant_type=refresh_token",
+		clientID, clientSecret, refreshToken)
+
+	resp, err := http.Post("https://oauth2.googleapis.com/token", "application/x-www-form-urlencoded", strings.NewReader(data))
+	if err != nil {
+		log.Printf("[GDrive] OAuth token refresh failed: %v", err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("[GDrive] OAuth token refresh HTTP %d: %s", resp.StatusCode, string(body))
+		return ""
+	}
+
+	var tokenResp struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+		TokenType   string `json:"token_type"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		log.Printf("[GDrive] OAuth token refresh decode error: %v", err)
+		return ""
+	}
+
+	if tokenResp.AccessToken == "" {
+		log.Printf("[GDrive] OAuth token refresh returned empty access_token")
+		return ""
+	}
+
+	expiry := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).Format(time.RFC3339)
+	database.SetSetting("gdrive_oauth_access_token", tokenResp.AccessToken)
+	database.SetSetting("gdrive_oauth_token_expiry", expiry)
+
+	log.Printf("[GDrive] OAuth token refreshed, expires in %ds", tokenResp.ExpiresIn)
+	return tokenResp.AccessToken
+}
+
+func (h *Handler) handleGDriveOAuthStart(c *gin.Context) {
+	if !c.GetBool("is_admin") {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
+	clientID := database.GetSetting("gdrive_oauth_client_id")
+	clientSecret := database.GetSetting("gdrive_oauth_client_secret")
+	redirectURI := database.GetSetting("gdrive_oauth_redirect_uri")
+	if clientID == "" || clientSecret == "" || redirectURI == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "gdrive_oauth_not_configured"})
+		return
+	}
+
+	state := uuid.New().String()
+	database.SetSetting("gdrive_oauth_state", state)
+
+	authURL := fmt.Sprintf(
+		"https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=%s&access_type=offline&prompt=consent&state=%s",
+		clientID, redirectURI, "https://www.googleapis.com/auth/drive.readonly", state,
+	)
+
+	c.Redirect(http.StatusTemporaryRedirect, authURL)
+}
+
+func (h *Handler) handleGDriveOAuthCallback(c *gin.Context) {
+	code := c.Query("code")
+	state := c.Query("state")
+	if code == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_code"})
+		return
+	}
+
+	storedState := database.GetSetting("gdrive_oauth_state")
+	if storedState == "" || storedState != state {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_state"})
+		return
+	}
+	database.SetSetting("gdrive_oauth_state", "")
+
+	clientID := database.GetSetting("gdrive_oauth_client_id")
+	clientSecret := database.GetSetting("gdrive_oauth_client_secret")
+	redirectURI := database.GetSetting("gdrive_oauth_redirect_uri")
+
+	data := fmt.Sprintf("code=%s&client_id=%s&client_secret=%s&redirect_uri=%s&grant_type=authorization_code",
+		code, clientID, clientSecret, redirectURI)
+
+	resp, err := http.Post("https://oauth2.googleapis.com/token", "application/x-www-form-urlencoded", strings.NewReader(data))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "token_exchange_failed"})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("[GDrive] OAuth token exchange HTTP %d: %s", resp.StatusCode, string(body))
+		c.JSON(http.StatusBadGateway, gin.H{"error": "token_exchange_failed"})
+		return
+	}
+
+	var tokenResp struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		TokenType    string `json:"token_type"`
+		Scope        string `json:"scope"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "token_decode_failed"})
+		return
+	}
+
+	database.SetSetting("gdrive_oauth_access_token", tokenResp.AccessToken)
+	database.SetSetting("gdrive_oauth_token_expiry", time.Now().Add(time.Duration(tokenResp.ExpiresIn)*time.Second).Format(time.RFC3339))
+	if tokenResp.RefreshToken != "" {
+		database.SetSetting("gdrive_oauth_refresh_token", tokenResp.RefreshToken)
+	}
+
+	log.Printf("[GDrive] OAuth connected, expires in %ds", tokenResp.ExpiresIn)
+	c.Redirect(http.StatusTemporaryRedirect, "/")
+}
+
+func (h *Handler) handleGDriveOAuthStatus(c *gin.Context) {
+	refreshToken := database.GetSetting("gdrive_oauth_refresh_token")
+	clientID := database.GetSetting("gdrive_oauth_client_id")
+	clientSecret := database.GetSetting("gdrive_oauth_client_secret")
+	redirectURI := database.GetSetting("gdrive_oauth_redirect_uri")
+
+	c.JSON(http.StatusOK, gin.H{
+		"connected":       refreshToken != "",
+		"client_id":       clientID != "",
+		"client_secret":   clientSecret != "",
+		"redirect_uri":    redirectURI != "",
+		"config_complete": clientID != "" && clientSecret != "" && redirectURI != "",
+	})
+}
+
+func (h *Handler) handleGDriveOAuthDisconnect(c *gin.Context) {
+	if !c.GetBool("is_admin") {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return
+	}
+
+	database.SetSetting("gdrive_oauth_access_token", "")
+	database.SetSetting("gdrive_oauth_refresh_token", "")
+	database.SetSetting("gdrive_oauth_token_expiry", "")
+	database.SetSetting("gdrive_oauth_state", "")
+
+	c.JSON(http.StatusOK, gin.H{"status": "disconnected"})
 }

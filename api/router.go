@@ -210,10 +210,17 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS, startTG func(cfg *config.C
 		api.GET("/gdrive/status", h.handleGetGDriveStatus)
 		api.POST("/gdrive/import", h.handlePostGDriveImport)
 		api.POST("/gdrive/api-key", h.handlePostGDriveAPIKey)
+		api.GET("/gdrive/oauth/start", h.handleGDriveOAuthStart)
+		api.GET("/gdrive/oauth/status", h.handleGDriveOAuthStatus)
+		api.POST("/gdrive/oauth/config", h.handlePostGDriveOAuthConfig)
+		api.POST("/gdrive/oauth/disconnect", h.handleGDriveOAuthDisconnect)
 
 		// WebSocket
 		api.GET("/ws", h.handleWebSocket)
 	}
+
+	// Google Drive OAuth callback (public — Google redirects here, no session cookie)
+	r.GET("/api/gdrive/oauth/callback", h.handleGDriveOAuthCallback)
 
 	// Main Page
 	r.GET("/", h.handleGetIndex)
