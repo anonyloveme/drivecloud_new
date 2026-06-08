@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"path"
@@ -26,7 +27,7 @@ import (
 const (
 	driveAPIBase     = "https://www.googleapis.com/drive/v3/files"
 	maxGDriveDepth   = 10
-	maxGDriveFiles   = 10000
+	maxGDriveFiles   = 50000
 	googleNativeMime = "application/vnd.google-apps."
 )
 
@@ -243,6 +244,10 @@ func (h *Handler) processGDriveImport(taskID, folderID, dbPath, apiKey, accessTo
 	)
 
 	tgclient.UpdateTask(taskID, "importing", 0, fmt.Sprintf("gdrive_importing|%d|%d", total, len(skipped)), owner)
+
+	// Shuffle files so workers process files from ALL folders interleaved,
+	// not sequentially by folder (which starves later folders).
+	rand.Shuffle(len(files), func(i, j int) { files[i], files[j] = files[j], files[i] })
 
 	jobs := make(chan gdriveFile, len(files))
 	for _, f := range files {
