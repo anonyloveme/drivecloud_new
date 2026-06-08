@@ -31,6 +31,8 @@ const (
 	googleNativeMime = "application/vnd.google-apps."
 )
 
+var gdriveDebug = os.Getenv("GDRIVE_DEBUG") == "1"
+
 type gdriveFile struct {
 	ID           string
 	Name         string
@@ -214,20 +216,24 @@ func (h *Handler) processGDriveImport(taskID, folderID, dbPath, apiKey, accessTo
 	}
 
 	// Debug: log target paths for first ~10 files
-	for i, f := range files {
-		if i >= 10 {
-			break
+	if gdriveDebug {
+		for i, f := range files {
+			if i >= 10 {
+				break
+			}
+			targetPath := dbPath
+			if f.RelativePath != "" {
+				targetPath = path.Clean(dbPath + "/" + f.RelativePath)
+			}
+			log.Printf("[GDrive] File target: %s/%s (rel=%s, dbPath=%s)", targetPath, f.Name, f.RelativePath, dbPath)
 		}
-		targetPath := dbPath
-		if f.RelativePath != "" {
-			targetPath = path.Clean(dbPath + "/" + f.RelativePath)
-		}
-		log.Printf("[GDrive] File target: %s/%s (rel=%s, dbPath=%s)", targetPath, f.Name, f.RelativePath, dbPath)
 	}
 
 	// Log the full sorted folder list for verification
-	for i, fp := range folders {
-		log.Printf("[GDrive] Folder[%d]: %s", i, fp)
+	if gdriveDebug {
+		for i, fp := range folders {
+			log.Printf("[GDrive] Folder[%d]: %s", i, fp)
+		}
 	}
 
 	// BUG2 FIX: Worker pool with bounded concurrency
@@ -471,6 +477,7 @@ func listDriveFilesRecursive(ctx context.Context, apiKey, accessToken, folderID,
 	var folders []string
 	var skipped []string
 	pageToken := ""
+	retries := 0
 
 	for {
 		select {
@@ -509,7 +516,14 @@ func listDriveFilesRecursive(ctx context.Context, apiKey, accessToken, folderID,
 
 		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
 			resp.Body.Close()
-			time.Sleep(3 * time.Second)
+			retries++
+			if retries > 5 {
+				log.Printf("[GDrive] rate limit: giving up after retries")
+				break
+			}
+			delay := time.Duration(1<<uint(retries-1)) * time.Second
+			jitter := time.Duration(rand.Int63n(int64(delay) / 2))
+			time.Sleep(delay + jitter)
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
@@ -517,6 +531,7 @@ func listDriveFilesRecursive(ctx context.Context, apiKey, accessToken, folderID,
 			log.Printf("[GDrive] list HTTP %d", resp.StatusCode)
 			break
 		}
+		retries = 0
 
 		var listResp gdriveListResp
 		if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
@@ -528,8 +543,9 @@ func listDriveFilesRecursive(ctx context.Context, apiKey, accessToken, folderID,
 
 		fileLimitReached := false
 		for _, item := range listResp.Files {
-			// Log every item found for debugging
-			log.Printf("[GDrive] API item: name=%q mime=%q size=%s parentPath=%q depth=%d", item.Name, item.MimeType, item.Size, parentPath, depth)
+			if gdriveDebug {
+				log.Printf("[GDrive] API item: name=%q mime=%q size=%s parentPath=%q depth=%d", item.Name, item.MimeType, item.Size, parentPath, depth)
+			}
 
 			if item.MimeType == "application/vnd.google-apps.folder" {
 				// FOLDERS always enumerated — never cut short by file limit
