@@ -293,9 +293,13 @@ func (h *Handler) processGDriveImport(taskID, folderID, dbPath, apiKey, accessTo
 				}
 
 				atomic.AddInt64(&done, 1)
-				pct := int(atomic.LoadInt64(&done)) * 100 / total
+				doneVal := atomic.LoadInt64(&done)
+				if doneVal%10 == 0 || doneVal == int64(total) {
+					log.Printf("[GDrive] progress: %d/%d files imported", doneVal, total)
+				}
+				pct := int(doneVal) * 100 / total
 				tgclient.UpdateTask(taskID, "importing", pct,
-					fmt.Sprintf("gdrive_file|%s|%d|%d", f.Name, atomic.LoadInt64(&done), total), owner)
+					fmt.Sprintf("gdrive_file|%s|%d|%d", f.Name, doneVal, total), owner)
 			}
 		}()
 	}
