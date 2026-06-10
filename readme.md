@@ -1,15 +1,12 @@
-# TeleCloud
+# Drive
 
 <div align="center">
 
 🇻🇳 Tiếng Việt | [🇺🇸 English](./readme_en.md)
 
-**[📢 Nhóm Hỗ trợ](https://t.me/+p-d0qfGRbX4wNzJl)**
-*Tham gia để thảo luận và nhận hỗ trợ*
-
 </div>
 
-**TeleCloud** là một dự án sử dụng dung lượng lưu trữ của Telegram để lưu trữ và quản lý tệp. Được viết lại hoàn toàn bằng Golang, đem lại hiệu năng xuất sắc và sử dụng bộ nhớ cực thấp.
+**Drive** là một dự án sử dụng dung lượng lưu trữ của Telegram để lưu trữ và quản lý tệp. Được viết lại hoàn toàn bằng Golang, đem lại hiệu năng xuất sắc và sử dụng bộ nhớ cực thấp.
 
 > [!IMPORTANT]
 > **Thay đổi từ phiên bản 3.7.0**
@@ -43,12 +40,13 @@
 * ⚡ **Nén & Tải thư mục trực tiếp**: Tải toàn bộ thư mục về máy dưới dạng ZIP tức thì (Server-Side On-The-Fly ZIP Streaming) không thông qua ổ cứng máy chủ để tối ưu bộ nhớ và băng thông (chỉ áp dụng cho người dùng đã đăng nhập).
 * 🗂️ **Quản lý trực quan**: Giao diện File Browser hỗ trợ chế độ xem **Lưới (Grid)** và **Danh sách (List)**.
 * ⬆️ **Tốc độ tối ưu**: Upload song song (Multi-threading) và chia nhỏ (chunk) để tối ưu tốc độ và ổn định.
-* 📂 **Hỗ trợ WebDAV**: Gắn TeleCloud thành ổ đĩa mạng trên máy tính (Windows, macOS, Linux).
+* 📂 **Hỗ trợ WebDAV**: Gắn Drive thành ổ đĩa mạng trên máy tính (Windows, macOS, Linux).
 * 🪣 **Tương thích S3 API**: Cung cấp giao diện API tương thích S3 (sử dụng gofakes3) giúp kết nối với các ứng dụng bên thứ ba (Rclone, Cyberduck, Infuse, v.v.), hỗ trợ xác thực chữ ký bảo mật SigV4/SigV2 và Range requests để stream video.
 * 🔌 **Upload API**: Cho phép upload file từ xa qua HTTP API để tích hợp vào script hoặc CI/CD.
 * 📥 **Tải từ URL & Media**: Hỗ trợ tải tệp từ URL và Video/Nhạc (YouTube, TikTok, Facebook...) bằng **yt-dlp** ngay trong giao diện.
 * ⚡ **Tải trong nền**: Hỗ trợ tải tệp từ URL trong nền, không cần treo trình duyệt, có thông báo tiến trình real-time.
 * 🧲 **Tải Torrent**: Hỗ trợ tải Torrent và Magnet link trực tiếp về Telegram thông qua **aria2c**.
+* 📦 **Nhập từ Google Drive**: Nhập toàn bộ thư mục từ Google Drive vào Telegram với xác thực OAuth2 hoặc API Key, hỗ trợ đệ quy thư mục con và tải song song.
 * 👥 **Đa người dùng**: Hỗ trợ tạo tài khoản con với không gian lưu trữ riêng biệt (Virtual Path).
 * 🤖 **Multi-Bot (Bot Pool) & Nhận tệp cá nhân**: Sử dụng nhiều Bot phụ để chia đều tải trọng, tăng tốc độ. Đồng thời hỗ trợ từng thành viên (kể cả tài khoản con) liên kết tài khoản Telegram cá nhân để nhận tệp trực tiếp từ bất kỳ bot nào trong Bot Pool tự động lưu về thư mục riêng.
 * 🔐 **Bảo mật Passkey**: Hỗ trợ đăng nhập bằng vân tay, khuôn mặt hoặc khóa bảo mật (WebAuthn).
@@ -66,25 +64,11 @@ Sử dụng script tự động là cách đơn giản nhất để bắt đầu
 
 ### Linux / Termux / macOS / Raspberry Pi
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dabeecao/telecloud-go/main/auto-setup.sh -o auto-setup.sh && bash auto-setup.sh
+curl -fsSL https://raw.githubusercontent.com/anonyloveme/drivecloud_new/main/auto-setup.sh -o auto-setup.sh && bash auto-setup.sh
 ```
 
 ### Windows
-Tải [**`auto-install.bat`**](https://raw.githubusercontent.com/dabeecao/telecloud-go/main/auto-install.bat) và chạy với quyền **Administrator**.
-
----
-
-## 🚀 Quick Start (English)
-
-Use the automated script — the easiest way to get started:
-
-### Linux / Termux / macOS / Raspberry Pi
-```bash
-curl -fsSL https://raw.githubusercontent.com/dabeecao/telecloud-go/main/auto-setup-en.sh -o auto-setup-en.sh && bash auto-setup-en.sh
-```
-
-### Windows
-Download [**`auto-install-en.bat`**](https://raw.githubusercontent.com/dabeecao/telecloud-go/main/auto-install-en.bat) and run as **Administrator**.
+Tải [**`auto-install.bat`**](https://raw.githubusercontent.com/anonyloveme/drivecloud_new/main/auto-install.bat) và chạy với quyền **Administrator**.
 
 ---
 
@@ -103,7 +87,7 @@ Download [**`auto-install-en.bat`**](https://raw.githubusercontent.com/dabeecao/
 
 ## 🔐 Bảo mật
 
-TeleCloud được thiết kế với các tiêu chuẩn bảo mật tối ưu (bao gồm mã hóa dữ liệu nhạy cảm AES-256-GCM trong DB, hardening systemd, rate limits, chống SSRF/DNS Rebinding, CSP...).
+Drive được thiết kế với các tiêu chuẩn bảo mật tối ưu (bao gồm mã hóa dữ liệu nhạy cảm AES-256-GCM trong DB, hardening systemd, rate limits, chống SSRF/DNS Rebinding, CSP...).
 
 Để xem chi tiết về kiến trúc bảo mật, các khuyến nghị vận hành và hạn chế đã biết, vui lòng tham khảo:
 👉 [**Tài liệu Hướng dẫn Bảo mật & Hardening**](./docs/Security.md)
@@ -112,7 +96,7 @@ TeleCloud được thiết kế với các tiêu chuẩn bảo mật tối ưu (
 
 ## ⚠️ Điều khoản sử dụng & Miễn trừ trách nhiệm
 
-Dự án **TeleCloud** được phát triển nhằm mục đích lưu trữ và quản lý tệp tin cá nhân hợp pháp. Chúng tôi không chịu trách nhiệm đối với bất kỳ nội dung nào được người dùng tải lên hoặc các vi phạm điều khoản sử dụng của Telegram. Người dùng **hoàn toàn tự chịu trách nhiệm** cho hành vi sử dụng của mình.
+Dự án **Drive** được phát triển nhằm mục đích lưu trữ và quản lý tệp tin cá nhân hợp pháp. Chúng tôi không chịu trách nhiệm đối với bất kỳ nội dung nào được người dùng tải lên hoặc các vi phạm điều khoản sử dụng của Telegram. Người dùng **hoàn toàn tự chịu trách nhiệm** cho hành vi sử dụng của mình.
 
 Dự án được cung cấp **"nguyên trạng" (as-is)**, không có bất kỳ đảm bảo nào về tính ổn định hay bảo mật.
 
@@ -137,16 +121,10 @@ Dự án sử dụng các thư viện tuyệt vời:
 
 Xin cảm ơn các đội ngũ phát triển và các **nhà đóng góp (contributors)** đã cung cấp những công cụ và nỗ lực hữu ích cho cộng đồng.
 
-<a href="https://github.com/dabeecao/telecloud-go/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=dabeecao/telecloud-go" />
-</a>
-
-**Một phần mã nguồn của dự án và readme này được tham khảo và chỉnh sửa bởi Gemini AI**
-
 ---
 
 ## 📜 Giấy phép & Credits
 
 Dự án này được phát hành dưới giấy phép [GNU Affero General Public License v3.0 (AGPL-3.0)](https://www.gnu.org/licenses/agpl-3.0.html).
 
-Dựa trên [TeleCloud](https://github.com/dabeecao/telecloud-go) của [@dabeecao](https://github.com/dabeecao).
+Tác giả: [@hoanganhblog](https://github.com/hoanganhblog)

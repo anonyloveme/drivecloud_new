@@ -1,15 +1,12 @@
-# TeleCloud
+# Drive
 
 <div align="center">
 
 [🇻🇳 Tiếng Việt](./readme.md) | 🇺🇸 English
 
-**[📢 Support Group](https://t.me/+p-d0qfGRbX4wNzJl)**
-*Join the group to discuss and get support*
-
 </div>
 
-**TeleCloud** is a project that allows you to use Telegram’s nearly unlimited storage capacity to store and manage files. Completely rewritten in Golang for excellent performance and low memory usage.
+**Drive** is a project that allows you to use Telegram's nearly unlimited storage capacity to store and manage files. Completely rewritten in Golang for excellent performance and low memory usage.
 
 > [!IMPORTANT]
 > **Changed since version 3.7.0**
@@ -43,12 +40,13 @@
 * ⚡ **On-The-Fly Folder Download**: Supports high-performance, diskless server-side ZIP streaming to download entire directories instantly without using any server disk storage (exclusively restricted to logged-in users for optimal efficiency).
 * 🗂️ **Intuitive Management**: File Browser with **Grid** and **List** view modes.
 * ⬆️ **High Performance**: Multi-threaded and chunked uploads for maximum speed and stability.
-* 📂 **WebDAV Support**: Mount TeleCloud as a network drive on Windows, macOS, and Linux.
+* 📂 **WebDAV Support**: Mount Drive as a network drive on Windows, macOS, and Linux.
 * 🪣 **S3 API Compatibility**: Provides an S3-compatible API (via gofakes3) to integrate with third-party clients (Rclone, Cyberduck, Infuse, etc.) supporting secure SigV4/SigV2 signature verification and Range requests for smooth video streaming.
 * 🔌 **Upload API**: Remote file uploads via HTTP API for script or CI/CD integration.
 * 📥 **URL & Media Downloader**: Download files from URLs and Media (YouTube, TikTok, Facebook...) using **yt-dlp** directly in the UI.
 * ⚡ **Background Tasks**: Background URL downloads with real-time progress notifications.
 * 🧲 **Torrent Support**: Download Torrents and Magnet links directly to Telegram via **aria2c**.
+* 📦 **Google Drive Import**: Import entire folders from Google Drive to Telegram with OAuth2 or API Key authentication, supporting recursive subfolder traversal and parallel downloads.
 * 👥 **Multi-user**: Support for child accounts with isolated storage spaces (Virtual Path).
 * 🤖 **Multi-Bot (Bot Pool) & Personal File Receipt**: Distribute workloads across multiple secondary bots to maximize speed and reliability. Also allows each user (including child accounts) to link their personal Telegram account to instantly upload and organize files sent directly to any bot in the Bot Pool into their own storage workspace.
 * 🔐 **Passkey Security**: Biometric login (Fingerprint, FaceID) or security keys (WebAuthn).
@@ -66,25 +64,11 @@ Use the automated script — the easiest way to get started:
 
 ### Linux / Termux / macOS / Raspberry Pi
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dabeecao/telecloud-go/main/auto-setup-en.sh -o auto-setup-en.sh && bash auto-setup-en.sh
+curl -fsSL https://raw.githubusercontent.com/anonyloveme/drivecloud_new/main/auto-setup-en.sh -o auto-setup-en.sh && bash auto-setup-en.sh
 ```
 
 ### Windows
-Download [**`auto-install-en.bat`**](https://raw.githubusercontent.com/dabeecao/telecloud-go/main/auto-install-en.bat) and run as **Administrator**.
-
----
-
-## 🚀 Cài đặt nhanh (Tiếng Việt)
-
-Sử dụng script tự động là cách đơn giản nhất để bắt đầu:
-
-### Linux / Termux / macOS / Raspberry Pi
-```bash
-curl -fsSL https://raw.githubusercontent.com/dabeecao/telecloud-go/main/auto-setup.sh -o auto-setup.sh && bash auto-setup.sh
-```
-
-### Windows
-Tải [**`auto-install.bat`**](https://raw.githubusercontent.com/dabeecao/telecloud-go/main/auto-install.bat) và chạy với quyền **Administrator**.
+Download [**`auto-install-en.bat`**](https://raw.githubusercontent.com/anonyloveme/drivecloud_new/main/auto-install-en.bat) and run as **Administrator**.
 
 ---
 
@@ -103,7 +87,7 @@ For configuration details and alternative installation methods, please refer to 
 
 ## 🔐 Security
 
-TeleCloud is designed with optimized security standards (including AES-256-GCM encryption for sensitive data, systemd hardening, WebDAV rate limiting, SSRF/DNS Rebinding mitigation, CSP, etc.).
+Drive is designed with optimized security standards (including AES-256-GCM encryption for sensitive data, systemd hardening, WebDAV rate limiting, SSRF/DNS Rebinding mitigation, CSP, etc.).
 
 For more detailed information regarding security architecture, operational recommendations, and known limitations, please refer to:
 👉 [**Security Policy & Hardening Guide**](./docs/Security.md)
@@ -112,9 +96,9 @@ For more detailed information regarding security architecture, operational recom
 
 ## ⚠️ Terms of Use & Disclaimer
  
-**TeleCloud** is developed for storing and managing legitimate personal files. We are not responsible for any content uploaded by users or violations of Telegram’s terms of service. Users are **fully responsible** for their own actions.
+**Drive** is developed for storing and managing legitimate personal files. We are not responsible for any content uploaded by users or violations of Telegram's terms of service. Users are **fully responsible** for their own actions.
 
-The project is provided **“as-is”**, without any guarantees of stability or security.
+The project is provided **"as-is"**, without any guarantees of stability or security.
 
 ---
 
@@ -137,16 +121,10 @@ This project uses amazing libraries:
 
 Thanks to all development teams and **contributors** for providing great tools and efforts for the community.
 
-<a href="https://github.com/dabeecao/telecloud-go/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=dabeecao/telecloud-go" />
-</a>
-
-**A portion of the project's source code and this readme was referenced and modified by Gemini AI.**
-
 ---
 
 ## 📜 License & Credits
 
 This project is licensed under the [GNU Affero General Public License v3.0 (AGPL-3.0)](https://www.gnu.org/licenses/agpl-3.0.html).
 
-Based on [TeleCloud](https://github.com/dabeecao/telecloud-go) by [@dabeecao](https://github.com/dabeecao).
+Author: [@hoanganhblog](https://github.com/hoanganhblog)
