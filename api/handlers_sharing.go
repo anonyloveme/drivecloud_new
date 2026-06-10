@@ -1,9 +1,13 @@
 package api
 
 import (
+	"archive/zip"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"telecloud/database"
@@ -190,6 +194,128 @@ func (h *Handler) handleGetSharedFolderFiles(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"files": files, "total_size": totalSize})
+}
+
+func (h *Handler) handleDownloadSharedFolderZip(c *gin.Context) {
+	token := c.Param("token")
+	var item database.File
+	if err := database.RODB.Get(&item, "SELECT id, filename, path, is_folder, share_password FROM files WHERE share_token = ? AND deleted_at IS NULL", token); err != nil || !item.IsFolder {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Folder not found"})
+		return
+	}
+
+	if !h.checkShareAuth(c, item) {
+		c.AbortWithStatus(http.StatusForbidden)
+		return
+	}
+
+	basePrefix := item.Path + "/" + item.Filename
+	if item.Path == "/" {
+		basePrefix = "/" + item.Filename
+	}
+
+	reqPath := c.Query("path")
+	selectedPrefix := basePrefix
+	zipRootName := item.Filename
+
+	if reqPath != "" && reqPath != "/" {
+		if !strings.HasPrefix(reqPath, "/") {
+			reqPath = "/" + reqPath
+		}
+		candidate := path.Clean(basePrefix + reqPath)
+		if candidate != basePrefix && !strings.HasPrefix(candidate, basePrefix+"/") {
+			c.JSON(http.StatusForbidden, gin.H{"error": "path outside share scope"})
+			return
+		}
+		selectedPrefix = candidate
+		parts := strings.Split(strings.Trim(reqPath, "/"), "/")
+		zipRootName = parts[len(parts)-1]
+	}
+
+	var fileCount int
+	if err := database.RODB.Get(&fileCount,
+		"SELECT COUNT(*) FROM files WHERE (path = ? OR path LIKE ?) AND is_folder = 0 AND message_id IS NOT NULL AND deleted_at IS NULL",
+		selectedPrefix, selectedPrefix+"/%"); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "count query failed"})
+		return
+	}
+	if fileCount > 10000 {
+		log.Printf("[ShareZip] rejected: %d files exceeds 10000 limit (token=%s path=%s)", fileCount, token, reqPath)
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("folder contains %d files (max 10000)", fileCount)})
+		return
+	}
+
+	var allItems []database.File
+	if err := database.RODB.Select(&allItems,
+		"SELECT id, filename, path, size, created_at, is_folder, mime_type, message_id FROM files WHERE (path = ? OR path LIKE ?) AND deleted_at IS NULL AND (is_folder = 1 OR message_id IS NOT NULL)",
+		selectedPrefix, selectedPrefix+"/%"); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
+		return
+	}
+
+	zipName := zipRootName + ".zip"
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, zipName))
+	c.Header("Content-Type", "application/zip")
+	c.Header("X-Accel-Buffering", "no")
+	c.SetCookie("dl_started", "1", 15, "/", "", false, false)
+
+	parentPath := selectedPrefix
+	idx := strings.LastIndex(selectedPrefix, "/")
+	if idx > 0 {
+		parentPath = selectedPrefix[:idx]
+	} else {
+		parentPath = ""
+	}
+
+	zw := zip.NewWriter(c.Writer)
+	defer zw.Close()
+
+	getZipPath := func(f database.File) string {
+		fullPath := f.Path + "/" + f.Filename
+		if f.Path == "/" {
+			fullPath = "/" + f.Filename
+		}
+		if parentPath == "" {
+			return strings.TrimPrefix(fullPath, "/")
+		}
+		return strings.TrimPrefix(strings.TrimPrefix(fullPath, parentPath), "/")
+	}
+
+	for _, f := range allItems {
+		zipPath := getZipPath(f)
+		if f.IsFolder {
+			if !strings.HasSuffix(zipPath, "/") {
+				zipPath += "/"
+			}
+			_, _ = zw.Create(zipPath)
+		} else {
+			header := &zip.FileHeader{
+				Name:   zipPath,
+				Method: zip.Deflate,
+			}
+			header.Modified = f.CreatedAt
+
+			writer, err := zw.CreateHeader(header)
+			if err != nil {
+				continue
+			}
+
+			reader, err := tgclient.GetTelegramFileReader(c.Request.Context(), f, h.cfg)
+			if err != nil {
+				log.Printf("[ShareZip] skip file %d %s: %v", f.ID, f.Filename, err)
+				continue
+			}
+
+			_, _ = io.Copy(writer, reader)
+			reader.Close()
+
+			if flusher, ok := c.Writer.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}
+	}
+
+	database.DB.Exec("UPDATE files SET share_downloads = share_downloads + 1 WHERE share_token = ? AND deleted_at IS NULL", token)
 }
 
 func (h *Handler) handleStreamSharedFile(c *gin.Context) {

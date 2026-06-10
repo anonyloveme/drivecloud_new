@@ -103,6 +103,7 @@ func SetupRouter(cfg *config.Config, contentFS fs.FS, startTG func(cfg *config.C
 	rl.GET("/s/:token/file/:id/stream", h.handleStreamSharedFileInFolder)
 	rl.GET("/s/:token/file/:id/stream/:filename", h.handleStreamSharedFileInFolder)
 	rl.GET("/s/:token/file/:id/dl", h.handleDownloadSharedFileInFolder)
+	rl.GET("/s/:token/zip", h.handleDownloadSharedFolderZip)
 	rl.GET("/s/:token/cbz/list", h.handleGetSharedComicPages)
 	rl.GET("/s/:token/cbz/page", h.handleGetSharedComicPage)
 	rl.HEAD("/s/:token/cbz/page", h.handleGetSharedComicPage)
