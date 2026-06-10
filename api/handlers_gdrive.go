@@ -33,6 +33,8 @@ const (
 
 var gdriveDebug = os.Getenv("GDRIVE_DEBUG") == "1"
 
+var tokenMu sync.Mutex
+
 type gdriveFile struct {
 	ID           string
 	Name         string
@@ -404,12 +406,19 @@ func (h *Handler) importOneDriveFile(ctx context.Context, f gdriveFile, targetPa
 }
 
 func doDriveDownload(ctx context.Context, url, apiKey, accessToken string) (*http.Response, error) {
+	token := accessToken
+	if token != "" {
+		if fresh := getValidAccessToken(); fresh != "" {
+			token = fresh
+		}
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	if accessToken != "" {
-		req.Header.Set("Authorization", "Bearer "+accessToken)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	client := &http.Client{Timeout: 30 * time.Minute}
 	resp, err := client.Do(req)
@@ -417,12 +426,48 @@ func doDriveDownload(ctx context.Context, url, apiKey, accessToken string) (*htt
 		return nil, fmt.Errorf("download: %w", err)
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized && accessToken != "" {
+		resp.Body.Close()
+		if fresh := getValidAccessToken(); fresh != "" {
+			token = fresh
+		}
+		req2, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("create retry request: %w", err)
+		}
+		req2.Header.Set("Authorization", "Bearer "+token)
+		resp2, err := client.Do(req2)
+		if err != nil {
+			return nil, fmt.Errorf("retry download: %w", err)
+		}
+		if resp2.StatusCode == http.StatusForbidden || resp2.StatusCode == http.StatusTooManyRequests {
+			resp2.Body.Close()
+			time.Sleep(5 * time.Second)
+			req3, _ := http.NewRequestWithContext(ctx, "GET", url+"&confirm=t", nil)
+			req3.Header.Set("Authorization", "Bearer "+token)
+			resp3, err := client.Do(req3)
+			if err != nil {
+				return nil, fmt.Errorf("retry download: %w", err)
+			}
+			if resp3.StatusCode != http.StatusOK {
+				resp3.Body.Close()
+				return nil, fmt.Errorf("download failed HTTP %d after retry", resp3.StatusCode)
+			}
+			return resp3, nil
+		}
+		if resp2.StatusCode != http.StatusOK {
+			resp2.Body.Close()
+			return nil, fmt.Errorf("download failed HTTP %d after 401 retry", resp2.StatusCode)
+		}
+		return resp2, nil
+	}
+
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
 		resp.Body.Close()
 		time.Sleep(5 * time.Second)
 		req2, _ := http.NewRequestWithContext(ctx, "GET", url+"&confirm=t", nil)
-		if accessToken != "" {
-			req2.Header.Set("Authorization", "Bearer "+accessToken)
+		if token != "" {
+			req2.Header.Set("Authorization", "Bearer "+token)
 		}
 		resp2, err := client.Do(req2)
 		if err != nil {
@@ -445,16 +490,23 @@ func doDriveDownload(ctx context.Context, url, apiKey, accessToken string) (*htt
 
 // getDriveFileName fetches the name of a Drive file/folder by ID.
 func getDriveFileName(ctx context.Context, apiKey, accessToken, fileID string) string {
+	token := accessToken
+	if token != "" {
+		if fresh := getValidAccessToken(); fresh != "" {
+			token = fresh
+		}
+	}
+
 	url := fmt.Sprintf("%s/%s?fields=name&supportsAllDrives=true", driveAPIBase, fileID)
-	if accessToken == "" {
+	if token == "" {
 		url += "&key=" + apiKey
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return ""
 	}
-	if accessToken != "" {
-		req.Header.Set("Authorization", "Bearer "+accessToken)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
@@ -508,7 +560,11 @@ func listDriveFilesRecursive(ctx context.Context, apiKey, accessToken, folderID,
 			break
 		}
 		if accessToken != "" {
-			req.Header.Set("Authorization", "Bearer "+accessToken)
+			token := getValidAccessToken()
+			if token == "" {
+				token = accessToken
+			}
+			req.Header.Set("Authorization", "Bearer "+token)
 		}
 
 		client := &http.Client{Timeout: 30 * time.Second}
@@ -653,6 +709,9 @@ func authMode(accessToken, apiKey string) string {
 // getValidAccessToken returns a valid access token, refreshing if expired.
 // Returns "" if OAuth is not configured.
 func getValidAccessToken() string {
+	tokenMu.Lock()
+	defer tokenMu.Unlock()
+
 	accessToken := database.GetSetting("gdrive_oauth_access_token")
 	refreshToken := database.GetSetting("gdrive_oauth_refresh_token")
 	if refreshToken == "" {
